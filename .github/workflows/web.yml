@@ -1,16 +1,16 @@
 # Frontend gates: generated client + route tree freshness, TS 7 typecheck, Oxlint (boundaries), Oxfmt, tests,
-# i18n completeness and React Doctor. Runs only when web inputs change; one job; pnpm store cached.
+# i18n completeness and React Doctor. Runs only when web inputs change; on PRs, reports immediately when skipped so
+# required checks never stay pending (ADR 0009); one job; pnpm store cached.
 name: web
 
 on:
   push:
     branches: [main]
-    paths: &paths
+    paths:
       - "web/**"
       - "scripts/**"
       - ".github/workflows/web.yml"
   pull_request:
-    paths: *paths
   workflow_dispatch:
 
 concurrency:
@@ -30,49 +30,83 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
 
-      - uses: pnpm/action-setup@v6
+      - name: Detect relevant changes
+        id: changes
+        working-directory: .
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE_SHA" HEAD | grep -Eq '^(web/|scripts/|\.github/workflows/web\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.changes.outputs.run == 'true'
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
 
-      - uses: actions/setup-node@v7
+      - if: steps.changes.outputs.run == 'true'
+        uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
       # --ignore-scripts: skips `prepare` (git hooks are for local clones only).
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - if: steps.changes.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Generated artifacts are up to date
+        if: steps.changes.outputs.run == 'true'
         run: |
           pnpm run api:generate
           pnpm exec vite build
           node ../scripts/check-generated.mjs
 
-      - run: pnpm run typecheck
-      - run: pnpm run lint
-      - run: pnpm run fmt:check
+      - if: steps.changes.outputs.run == 'true'
+        run: pnpm run typecheck
+      - if: steps.changes.outputs.run == 'true'
+        run: pnpm run lint
+      - if: steps.changes.outputs.run == 'true'
+        run: pnpm run fmt:check
 
       # Component tests run in headless Chromium (Vitest browser mode, ADR 0005); the download is cached per
       # Playwright version.
       - name: Playwright version
         id: playwright
+        if: steps.changes.outputs.run == 'true'
         run: echo "version=$(pnpm exec playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
+      - if: steps.changes.outputs.run == 'true'
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-      - run: pnpm exec playwright install --with-deps --only-shell chromium
-      - run: pnpm run test
+      - if: steps.changes.outputs.run == 'true'
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+      - if: steps.changes.outputs.run == 'true'
+        run: pnpm run test
 
       - name: Agent tooling tests
+        if: steps.changes.outputs.run == 'true'
         run: node --test ../scripts/agents/
 
       - name: i18n catalogs are complete
+        if: steps.changes.outputs.run == 'true'
         run: |
           pnpm run i18n:extract
           node ../scripts/check-i18n.mjs
 
       - name: React Doctor
+        if: steps.changes.outputs.run == 'true'
         run: pnpm exec react-doctor . --yes --no-score --blocking warning
