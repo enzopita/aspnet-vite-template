@@ -1,6 +1,0 @@
-# Asp.Versioning.OpenApi 10.2.3 requires Microsoft.OpenApi 2.x, incompatible with .NET 11's Microsoft.OpenApi 3.x.
-# Covers both App.Api sources and source-generated OpenApiXmlCommentSupport.generated.cs; remove once Asp.Versioning.OpenApi 11.x ships.
-is_global = true
-
-dotnet_diagnostic.AV0029.severity = none
-dotnet_diagnostic.AV0030.severity = none

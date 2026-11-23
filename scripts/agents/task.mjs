@@ -38,7 +38,7 @@ const HELP = `App task tooling (ADR 0008)
   new <slug> --title "<t>"     create docs/tasks/NNNN-<slug>.md from the template (planner)
   start <id> [--worktree]      create/checkout the task branch (or a sibling worktree) and mark it in-progress
   brief <id>                   print the prompt to paste into the executor agent
-  check [--staged|--ref <r>]   scope fence: paths, protected files, task file, forbidden patterns
+  check [--staged|--ref <r>]   scope fence: paths, protected files, task file
         [--task <id>] [--json] [--hook]
   verify [--task <id>]         check + the quality gates for the touched areas + the task's own verify commands
 
@@ -46,88 +46,10 @@ The fence is off outside task/* branches. Reviewers and humans may bypass it wit
 executor agents are blocked from doing so by their harness adapters.`;
 
 // ---------------------------------------------------------------------------------------------------------------
-// forbidden patterns in added lines
+// code rules live in native analyzers, GovernanceTests, Oxlint, and scripts/lint-extra.mjs (PATTERNS is empty)
 
-const CODE = ["**/*.cs", "**/*.ts", "**/*.tsx", "**/*.mjs", "**/*.css"];
-const WEB_UI = ["web/src/**/*.tsx", "web/src/**/*.ts", "web/src/**/*.css"];
-const TESTS = ["tests/**", "web/src/**/*.test.ts", "web/src/**/*.test.tsx"];
-const PALETTE =
-  "slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|black|white";
-
-/** @type {{ files: string[], except?: string[], re: RegExp, level: "error" | "warning", message: string }[]} */
-const PATTERNS = [
-  {
-    files: ["**/*.cs"],
-    except: [MIGRATIONS], // `dotnet ef` emits `#pragma warning disable 612, 618` in every generated migration
-    re: /#pragma\s+warning\s+disable/,
-    level: "error",
-    message: "warning suppressed — fix the cause",
-  },
-  { files: ["**/*.cs"], re: /SuppressMessage\s*\(/, level: "error", message: "analyzer suppressed — fix the cause" },
-  {
-    files: ["**/*.csproj", "**/*.props"],
-    re: /<NoWarn>|<TreatWarningsAsErrors>\s*false|<Nullable>\s*(disable|annotations)|<WarningsNotAsErrors>/i,
-    level: "error",
-    message: "build strictness lowered",
-  },
-  { files: ["**/*.cs"], re: /\b(Skip\s*=\s*"|\[Ignore)/, level: "error", message: "test skipped" },
-  {
-    files: ["tests/**/*.cs"],
-    re: /\?\.[\w.]*\bShould\w*\s*\(/,
-    level: "error",
-    message: "assertion behind `?.` is skipped when the value is null — assert it with ShouldNotBeNull() first",
-  },
-  {
-    files: ["tests/**/*.cs"],
-    re: /\bStatusCode\.ShouldNotBe\s*\(/,
-    level: "error",
-    message: "negative status assertion passes for any other status — assert the exact expected status",
-  },
-  {
-    files: ["tests/**/*.cs"],
-    re: /[)\]]\s*!(?!=)/,
-    level: "error",
-    message: "null-forgiving `!` hides a null — assert ShouldNotBeNull() or use a non-null API (e.g. StringValues.ToString())",
-  },
-  {
-    files: ["src/**/*.cs"],
-    re: /\bDateTime(Offset)?\.(Now|UtcNow|Today)\b/,
-    level: "error",
-    message: "ambient clock — inject TimeProvider (instants are DateTimeOffset in UTC)",
-  },
-  {
-    files: ["**/*.ts", "**/*.tsx", "**/*.mjs"],
-    re: /@ts-(ignore|nocheck|expect-error)|(oxlint|eslint)-disable/,
-    level: "error",
-    message: "type/lint check suppressed — fix the cause",
-  },
-  { files: ["**/*.ts", "**/*.tsx"], re: /\bas\s+any\b|:\s*any\b|<any>|\bas\s+unknown\s+as\b/, level: "error", message: "`any` / double cast" },
-  { files: ["**/*.ts", "**/*.tsx"], re: /\b(it|test|describe)\.(only|skip)\s*\(/, level: "error", message: "focused or skipped test" },
-  {
-    files: WEB_UI,
-    except: ["web/src/styles/**"],
-    re: new RegExp(`\\b(bg|text|border|ring|outline|fill|stroke|from|via|to|divide|shadow|accent|caret|decoration)-(${PALETTE})(-\\d{2,3})?(\\/\\d+)?\\b`),
-    level: "error",
-    message: "raw palette color — use design tokens (bg-surface, text-positive…)",
-  },
-  {
-    files: WEB_UI,
-    except: ["web/src/styles/**"],
-    re: /-\[(#|rgb|hsl|oklch)|(["'`\s(:])#[0-9a-fA-F]{3,8}\b(?!-)/,
-    level: "error",
-    message: "raw color value — use design tokens",
-  },
-  {
-    files: WEB_UI,
-    except: ["web/src/styles/**"],
-    re: /\b(duration|delay)-(\d+|\[)/,
-    level: "error",
-    message: "magic duration — use motion tokens (duration-fast…)",
-  },
-  { files: ["web/src/**/*.tsx"], re: />\s*[A-Za-z][A-Za-z ,.'!?:-]{3,}\s*</, level: "warning", message: "literal UI text? wrap it in <Trans>" },
-  { files: ["web/src/**"], re: /\bconsole\.(log|debug)\b/, level: "warning", message: "console logging left in" },
-  { files: CODE, re: /\b(TODO|FIXME|HACK|XXX)\b/, level: "warning", message: "unfinished-work marker" },
-];
+/** @type {never[]} */
+export const PATTERNS = [];
 
 // ---------------------------------------------------------------------------------------------------------------
 // change collection
@@ -143,16 +65,10 @@ function collect(root, mode, ref) {
     const [status, ...paths] = line.split("\t");
     files.push({ status: status[0], path: paths.at(-1), from: paths.length > 1 ? paths[0] : undefined });
   }
-  let patch = git(["diff", "-U0", "--no-color", "--no-ext-diff", ...range], { cwd: root });
 
   if (mode === "worktree") {
     for (const path of git(["ls-files", "--others", "--exclude-standard"], { cwd: root }).split("\n").filter(Boolean)) {
       files.push({ status: "A", path });
-      let content = "";
-      try {
-        content = readFileSync(join(root, path), "utf8");
-      } catch {}
-      if (!content.includes("\0")) patch += `\n+++ b/${path}\n${content.split(/\r?\n/).map((l, i) => `@@ -0,0 +${i + 1} @@\n+${l}`).join("\n")}`;
     }
   }
 
@@ -163,19 +79,7 @@ function collect(root, mode, ref) {
         : undefined
       : tryGit(["show", `${mode === "staged" ? "" : ref}:${path}`], { cwd: root });
 
-  return { base, files, patch, read, readBase: (path) => tryGit(["show", `${base}:${path}`], { cwd: root }) };
-}
-
-function addedLines(patch) {
-  const out = [];
-  let file;
-  let line = 0;
-  for (const l of patch.split("\n")) {
-    if (l.startsWith("+++ ")) file = l.replace(/^\+\+\+ (b\/)?/, "").trim();
-    else if (l.startsWith("@@")) line = Number(/\+(\d+)/.exec(l)?.[1] ?? 0);
-    else if (l.startsWith("+") && file && file !== "/dev/null") out.push({ file, line: line++, text: l.slice(1) });
-  }
-  return out;
+  return { base, files, read, readBase: (path) => tryGit(["show", `${base}:${path}`], { cwd: root }) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -241,15 +145,6 @@ export function check(root, opts = {}) {
       } else if (!matchesAny(path, allow)) {
         errors.push(`${path}: outside the task's \`allow\` paths`);
       }
-    }
-  }
-
-  for (const { file, line, text } of addedLines(ch.patch)) {
-    if (file.startsWith(`${TASKS_DIR}/`) || matchesAny(file, GENERATED)) continue;
-    for (const p of PATTERNS) {
-      if (!matchesAny(file, p.files) || (p.except && matchesAny(file, p.except))) continue;
-      if (p.level === "warning" && matchesAny(file, TESTS)) continue;
-      if (p.re.test(text)) (p.level === "error" ? errors : warnings).push(`${file}:${line}: ${p.message}  ⟶  ${text.trim().slice(0, 100)}`);
     }
   }
 

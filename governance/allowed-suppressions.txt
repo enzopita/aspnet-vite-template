@@ -1,0 +1,3 @@
+# Approved suppression exceptions for GovernanceTests (ADR 0008).
+# Format: <repo-relative-path>:<matching-substring> # reason | remove when: <condition>
+# Blank lines and lines starting with # are ignored.

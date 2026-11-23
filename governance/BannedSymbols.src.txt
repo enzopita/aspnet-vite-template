@@ -1,0 +1,9 @@
+// Banned APIs enforced on production C# projects (non-test) via Microsoft.CodeAnalysis.BannedApiAnalyzers (RS0030).
+// Format: <DocCommentId>;<Reason>
+
+// Ambient clock: inject TimeProvider instead so time-dependent behavior is deterministic and testable.
+P:System.DateTime.Now;Ambient clock: inject TimeProvider instead of calling DateTime.Now
+P:System.DateTime.UtcNow;Ambient clock: inject TimeProvider instead of calling DateTime.UtcNow
+P:System.DateTime.Today;Ambient clock: inject TimeProvider instead of calling DateTime.Today
+P:System.DateTimeOffset.Now;Ambient clock: inject TimeProvider instead of calling DateTimeOffset.Now
+P:System.DateTimeOffset.UtcNow;Ambient clock: inject TimeProvider instead of calling DateTimeOffset.UtcNow

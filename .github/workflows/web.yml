@@ -97,9 +97,9 @@ jobs:
       - if: steps.changes.outputs.run == 'true'
         run: pnpm run test
 
-      - name: Agent tooling tests
+      - name: Agent and script tooling tests
         if: steps.changes.outputs.run == 'true'
-        run: node --test ../scripts/agents/
+        run: node --test ../scripts/
 
       - name: i18n catalogs are complete
         if: steps.changes.outputs.run == 'true'

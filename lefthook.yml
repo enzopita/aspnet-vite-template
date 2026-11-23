@@ -47,6 +47,17 @@ pre-commit:
               - "web/src/app/route-tree.gen.ts"
             run: pnpm exec oxlint --type-aware --deny-warnings --no-error-on-unmatched-pattern {staged_files}
 
+          - name: lint-extra
+            root: web/
+            glob:
+              - "web/*.{ts,tsx,mjs}"
+              - "web/**/*.{ts,tsx,mjs,css}"
+            exclude:
+              - "web/src/lib/api/gen/**"
+              - "web/src/app/route-tree.gen.ts"
+              - "web/src/test/public/**"
+            run: node ../scripts/lint-extra.mjs {staged_files}
+
           - name: typecheck
             root: web/
             glob:
@@ -73,6 +84,8 @@ pre-commit:
               - "**/*.cs"
               - "**/*.csproj"
               - "**/*.props"
+              - "**/*.targets"
+              - "governance/**"
               - "*.slnx"
             run: dotnet test --project tests/App.ArchitectureTests
 
@@ -131,7 +144,7 @@ pre-push:
             run: pnpm run --silent test
 
           - name: agent tooling tests
-            run: node --test scripts/agents/
+            run: node --test scripts/
 
           - name: i18n
             root: web/
