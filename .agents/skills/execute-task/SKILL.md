@@ -13,9 +13,20 @@ them.
 
 ## 1. Load the contract
 
-Read `AGENTS.md`, then the whole task file, then every file under **Context** and **Reference implementation**.
+Read `AGENTS.md`, the area `AGENTS.md` injected by `SessionStart` (`src/AGENTS.md` and/or `web/AGENTS.md`), the whole
+task file, and every file under **Context** and **Reference implementation**.
 Done when you can name, for every step, which existing file you will imitate and which `allow` path you will write
 to. If a step has no such file or path, the spec is incomplete: go to step 6.
+
+Work from sources in this strict trust order:
+
+1. **`## Verified facts`** in the task spec (already checked by the planner).
+2. **The canonical reference file** you are imitating.
+3. **Compiler and LSP diagnostics** (`CS0618`, `typescript/no-deprecated`, analyzer errors).
+
+If an API, option, or flag is still missing from the spec and codebase, use `.agents/skills/look-it-up/SKILL.md` as a
+fallback (Microsoft Learn or Context7 — never memory alone) and cite every consulted URL under `## Executor log` →
+`### Sources`.
 
 ## 2. Work one step at a time
 
@@ -34,24 +45,32 @@ belong to other tasks. If you notice something worth doing, write it in the Exec
 ## 3. Keep the gates honest
 
 When a gate fails, change the code under test until it passes, even if that takes a while. The gate stays as it
-is. That means: no suppressions, no skipped or deleted tests, no loosened types, no edited config, no hand-edited
-generated files. Regenerate them instead (`pnpm --dir web api:generate`, `pnpm --dir web build`).
-If the only way through is changing a protected file or a test the spec didn't ask you to change, the spec is
-wrong: go to step 6.
+is. That means: no suppressions, no skipped or deleted tests, no loosened types, no edited config, no edited `frozen:`
+tests, and no hand-edited generated files. Regenerate generated files instead (`pnpm --dir web api:generate`,
+`pnpm --dir web build`). If the spec embeds tests under `## Contract tests` and you must diverge, justify why in
+`## Executor log`.
 
-## 4. Verify
+**3-attempt budget:** after 3 consecutive failures on the same gate, stop looping. Write your hypothesis and what you
+tried across the 3 attempts in `## Executor log`, set `status: blocked`, commit, and stop. If the only way through is
+changing a protected file, a `frozen:` test, or a test the spec didn't ask you to change, go to step 6 immediately.
 
-Run `node scripts/agents/task.mjs verify`. Done when it ends with `✔ task NNNN: all … gate(s) passed` on the tree
-you are about to commit. Any edit after that, even a small one, needs another verify run.
+## 4. Verify and audit
+
+1. Run `node scripts/agents/task.mjs verify`. Done when it ends with `✔ task NNNN: all … gate(s) passed` on the tree
+   you are about to commit. Any edit after that, even a small one, needs another verify run.
+2. Run `.agents/skills/diff-audit/SKILL.md` in a **clean context** (a subagent or a separate cheap model session that did
+   not write the code) against `git diff main...HEAD` and the spec before marking `status: review`. Resolve every
+   finding and re-run `verify`.
 
 ## 5. Hand back
 
 1. Commit with Conventional Commits in English, using the task's `scope`:
    `feat(orders): place an order`. Small commits per step are welcome.
-2. In the task file, tick an acceptance criterion only when a test proves every clause of it (e.g. "sets the password
-   once, **clears lockout**, rejects reused tokens" is three assertions). Write `## Executor log`: one line per
-   criterion naming its test (`criterion → TestClass.Test_name`), what you built, each decision
-   the spec left open and what you chose, anything the reviewer should look at first. Set `status: review`.
+2. In the task file, tick an acceptance criterion only when its named test proves every clause of it (e.g. "sets the
+   password once, **clears lockout**, rejects reused tokens" is three assertions). Write `## Executor log`: one line
+   per criterion naming its test (`criterion → TestClass.Test_name`), what you built, each decision the spec left open
+   and what you chose, any justification for spec test divergence, anything the reviewer should look at first, and
+   `### Sources` listing URLs for any fallback `look-it-up` queries. Set `status: review`.
 3. Commit that too. Done when `git status` is clean and `status: review` is committed.
 
 Your part ends there. Leave pushing, merging and branch management to the reviewer.

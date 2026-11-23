@@ -30,6 +30,7 @@ export const PROTECTED = [
   ".opencode/**",
   "opencode.json",
   "opencode.jsonc",
+  ".mcp.json",
   ".github/**",
   "scripts/**",
   "lefthook.yml",

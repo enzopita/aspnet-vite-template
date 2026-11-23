@@ -62,6 +62,9 @@ function collect(root, mode, ref) {
   const target = mode === "ref" ? ref : "HEAD";
   const base = tryGit(["merge-base", MAIN_BRANCH, target], { cwd: root });
   if (!base) throw new Error(`no merge-base between ${MAIN_BRANCH} and ${target}`);
+  const firstCommit = tryGit(["rev-list", "--reverse", `${base}..${target}`], { cwd: root })
+    ?.split("\n")
+    .find(Boolean);
 
   const range = mode === "ref" ? [base, ref] : mode === "staged" ? ["--cached", base] : [base];
   const files = [];
@@ -83,7 +86,22 @@ function collect(root, mode, ref) {
         : undefined
       : tryGit(["show", `${mode === "staged" ? "" : ref}:${path}`], { cwd: root });
 
-  return { base, files, read, readBase: (path) => tryGit(["show", `${base}:${path}`], { cwd: root }) };
+  const currentSha = (path) =>
+    mode === "worktree"
+      ? existsSync(join(root, path))
+        ? tryGit(["hash-object", "--", path], { cwd: root })
+        : undefined
+      : tryGit(["rev-parse", "--verify", `${mode === "staged" ? "" : ref}:${path}`], { cwd: root });
+
+  return {
+    base,
+    firstCommit,
+    files,
+    read,
+    currentSha,
+    readBase: (path) => tryGit(["show", `${base}:${path}`], { cwd: root }),
+    firstSha: (path) => (firstCommit ? tryGit(["rev-parse", "--verify", `${firstCommit}:${path}`], { cwd: root }) : undefined),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -142,9 +160,30 @@ export function check(root, opts = {}) {
 
   const allow = list(base.meta.allow);
   const unlock = list(base.meta.unlock);
+  const frozen = list(base.meta.frozen);
   for (const f of ch.files) {
     for (const path of [f.path, f.from].filter(Boolean)) {
       if (path === task.file) continue;
+      if (matchesAny(path, frozen)) {
+        const baseContent = ch.readBase(path);
+        if (baseContent !== undefined) {
+          errors.push(`${path}: frozen file (black-box contract test) — never modify frozen tests; if wrong, set status: blocked`);
+          continue;
+        }
+        if (ch.firstCommit) {
+          const firstBlob = ch.firstSha(path);
+          if (firstBlob === undefined || ch.currentSha(path) !== firstBlob) {
+            errors.push(
+              `${path}: frozen file (black-box contract test) — never modify frozen tests after the initial task commit; if wrong, set status: blocked`,
+            );
+          }
+          continue;
+        }
+        if (f.status !== "A") {
+          errors.push(`${path}: frozen file (black-box contract test) — never modify frozen tests; if wrong, set status: blocked`);
+        }
+        continue;
+      }
       if (matchesAny(path, unlock)) continue;
       if (matchesAny(path, [...GENERATED, ...ALWAYS_ALLOWED])) continue;
       if (matchesAny(path, [MIGRATIONS]) && f.status !== "A" && !matchesAny(path, [MIGRATION_SNAPSHOT])) {
@@ -154,6 +193,18 @@ export function check(root, opts = {}) {
       } else if (!matchesAny(path, allow)) {
         errors.push(`${path}: outside the task's \`allow\` paths`);
       }
+    }
+  }
+
+  const norm = (s) => s.replace(/\r\n/g, "\n").trim();
+  const normalizedSpec = frozenBody(base.body).replace(/\r\n/g, "\n");
+  for (const match of normalizedSpec.matchAll(/^```[a-z0-9_-]+[ \t]+([^\s`]+)[ \t]*\n([\s\S]*?)^```[ \t]*$/gm)) {
+    const specTestPath = match[1];
+    const snippet = norm(match[2]);
+    if (!snippet || /[<>]/.test(specTestPath) || !/(?:Tests\.cs|\.test\.[cm]?[jt]sx?)$/i.test(specTestPath)) continue;
+    const actual = ch.read(specTestPath);
+    if (!actual || !norm(actual).includes(snippet)) {
+      warnings.push(`${specTestPath}: test diverges from the snippet in ${task.file} — justify the divergence in "## Executor log"`);
     }
   }
 
