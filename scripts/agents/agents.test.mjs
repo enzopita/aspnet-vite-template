@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { GENERATED, PROTECTED, frozenBody, globToRegExp, parseTask } from "./lib.mjs";
-import { CONCURRENCY_RUNS, PATTERNS, check, gatesFor } from "./task.mjs";
+import { PATTERNS, check } from "./task.mjs";
 
 const repo = resolve(import.meta.dirname, "..", "..");
 
@@ -232,24 +232,5 @@ verify: []
       git("switch", "-q", "task/0001-example");
       git("branch", "-qD", "pr-tamper");
     }
-  });
-});
-
-describe("gatesFor", () => {
-  const task = { meta: { verify: [] } };
-  const race = 'dotnet test --project tests/App.Api.IntegrationTests --no-build -- --filter-class "*.StockConcurrencyTests"';
-  test("repeats each changed concurrency test class", () => {
-    const gates = gatesFor([{ status: "A", path: "tests/App.Api.IntegrationTests/Orders/StockConcurrencyTests.cs" }], task);
-    assert.equal(gates.filter((g) => g === race).length, CONCURRENCY_RUNS);
-  });
-  test("ignores ordinary and deleted test files", () => {
-    const gates = gatesFor(
-      [
-        { status: "M", path: "tests/App.Api.IntegrationTests/Orders/OrdersTests.cs" },
-        { status: "D", path: "tests/App.Api.IntegrationTests/Orders/StockConcurrencyTests.cs" },
-      ],
-      task,
-    );
-    assert.ok(!gates.some((g) => g.includes("--filter-class")));
   });
 });

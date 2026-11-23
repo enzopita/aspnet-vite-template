@@ -17,6 +17,7 @@ on:
       - "global.json"
       - "App.slnx"
       - ".editorconfig"
+      - "scripts/**"
       - ".github/workflows/backend.yml"
   pull_request:
   workflow_dispatch:
@@ -40,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          fetch-depth: 0
 
       - name: Detect relevant changes
         id: changes
@@ -53,7 +54,7 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only "$BASE_SHA" HEAD | grep -Eq '^(src/|tests/|web/openapi/|Directory\.Build\.props$|Directory\.Build\.targets$|Directory\.Packages\.props$|governance/|global\.json$|App\.slnx$|\.editorconfig$|\.github/workflows/backend\.yml$)'; then
+          if git diff --name-only "$BASE_SHA" HEAD | grep -Eq '^(src/|tests/|web/openapi/|Directory\.Build\.props$|Directory\.Build\.targets$|Directory\.Packages\.props$|governance/|global\.json$|App\.slnx$|\.editorconfig$|scripts/|\.github/workflows/backend\.yml$)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -63,6 +64,11 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
+
+      - if: steps.changes.outputs.run == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
 
       - name: Cache NuGet packages
         if: steps.changes.outputs.run == 'true'
@@ -75,18 +81,6 @@ jobs:
       - if: steps.changes.outputs.run == 'true'
         run: dotnet restore App.slnx
 
-      # Warnings are errors (Directory.Build.props); also regenerates web/openapi/app.json.
-      - if: steps.changes.outputs.run == 'true'
-        run: dotnet build App.slnx --no-restore --configuration Release
-
-      - name: OpenAPI contract is committed and up to date
+      - name: Verify (backend)
         if: steps.changes.outputs.run == 'true'
-        run: git diff --exit-code -- web/openapi
-
-      - name: Formatting
-        if: steps.changes.outputs.run == 'true'
-        run: dotnet format whitespace App.slnx --verify-no-changes
-
-      # Architecture, unit and integration tests (Testcontainers uses the runner's Docker).
-      - if: steps.changes.outputs.run == 'true'
-        run: dotnet test --solution App.slnx --no-build --configuration Release
+        run: node scripts/verify.mjs --mode ci --area backend

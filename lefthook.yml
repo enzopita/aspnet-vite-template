@@ -109,47 +109,6 @@ commit-msg:
       run: pnpm exec commitlint --edit {1}
 
 pre-push:
-  piped: true
   jobs:
-    - name: dotnet build (warnings as errors)
-      run: dotnet build App.slnx --nologo -v quiet
-
-    - name: dotnet format verify
-      run: dotnet format App.slnx --verify-no-changes --no-restore
-
-    - name: regenerate api client
-      root: web/
-      run: pnpm run --silent api:generate
-
-    - name: web build
-      root: web/
-      run: pnpm run --silent build
-
-    - name: generated artifacts up to date
-      run: node scripts/check-generated.mjs
-
-    - name: checks
-      group:
-        parallel: true
-        jobs:
-          - name: dotnet tests
-            run: dotnet test --solution App.slnx --no-build
-
-          - name: web check
-            root: web/
-            run: pnpm run --silent check
-
-          - name: web tests
-            root: web/
-            run: pnpm run --silent test
-
-          - name: agent tooling tests
-            run: node --test scripts/
-
-          - name: i18n
-            root: web/
-            run: pnpm run --silent i18n:extract && node ../scripts/check-i18n.mjs
-
-          - name: react doctor
-            root: web/
-            run: pnpm exec react-doctor . --yes --no-score --blocking warning
+    - name: verify
+      run: node scripts/verify.mjs --mode pre-push
