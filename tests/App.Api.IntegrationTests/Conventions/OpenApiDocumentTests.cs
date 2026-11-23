@@ -3,14 +3,13 @@ using Microsoft.OpenApi;
 namespace App.Api.IntegrationTests.Conventions;
 
 /// <summary>
-/// The OpenAPI document is the contract for the TS client (ADR 0007), so it is validated
-/// here with Microsoft.OpenApi — the library ASP.NET Core itself uses, which supports the 3.2 spec we publish.
-/// (Kubb's bundled validator doesn't read 3.2 yet, so its validation is disabled in web/kubb.config.ts.)
+/// The OpenAPI document is the contract for the TS client (ADR 0007), emitted as OpenAPI 3.1
+/// and validated both here with Microsoft.OpenApi and by Kubb in web/kubb.config.ts.
 /// </summary>
 public sealed class OpenApiDocumentTests(AppApiFactory factory)
 {
     [Fact]
-    public async Task Published_document_is_valid_openapi_3_2()
+    public async Task Published_document_is_valid_openapi_3_1()
     {
         using var client = factory.CreateClient();
         await using var stream = await client.GetStreamAsync(
@@ -20,7 +19,7 @@ public sealed class OpenApiDocumentTests(AppApiFactory factory)
         var result = await OpenApiDocument.LoadAsync(stream, "json", cancellationToken: TestContext.Current.CancellationToken);
 
         result.Diagnostic.ShouldNotBeNull();
-        result.Diagnostic.SpecificationVersion.ShouldBe(OpenApiSpecVersion.OpenApi3_2);
+        result.Diagnostic.SpecificationVersion.ShouldBe(OpenApiSpecVersion.OpenApi3_1);
         result.Diagnostic.Errors.ShouldBeEmpty();
 
         result.Document.ShouldNotBeNull();

@@ -13,10 +13,8 @@ import { defineConfig } from "kubb";
  */
 export default defineConfig({
   name: "app-api",
-  // The API publishes OpenAPI 3.2 (ASP.NET Core 11's default). Kubb's bundled validator can't read 3.2 yet, so the
-  // document is validated on the backend with Microsoft.OpenApi instead (tests/.../OpenApiDocumentTests.cs).
-  // Re-enable once @readme/openapi-parser supports 3.2.
-  adapter: adapterOas({ validate: false }),
+  // The API emits OpenAPI 3.1 (ADR 0007), which Kubb's bundled OpenAPI validator supports.
+  adapter: adapterOas({ validate: true }),
   input: "./openapi/app.json",
   output: {
     path: "./src/lib/api/gen",
