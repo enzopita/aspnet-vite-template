@@ -16,7 +16,7 @@
     "check": "pnpm typecheck && pnpm lint && pnpm fmt:check",
     "test": "vitest run",
     "test:watch": "vitest",
-    "api:generate": "KUBB_DISABLE_TELEMETRY=1 kubb generate && oxfmt src/lib/api/gen",
+    "api:generate": "node ../scripts/api-generate.mjs",
     "i18n:extract": "lingui extract --clean",
     "react-doctor": "react-doctor .",
     "prepare": "lefthook install"
