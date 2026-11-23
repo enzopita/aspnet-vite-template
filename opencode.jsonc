@@ -1,5 +1,5 @@
 // OpenCode project config for executor agents (ADR 0008). AGENTS.md is loaded automatically; the protocol lives in
-// .agents/skills/execute-task. The `.opencode/plugins/app-guard.mjs` plugin (V2 API) enforces role-aware worktree
+// .agents/skills/execute-task. The `.opencode/plugins/app-guard/index.mjs` plugin (V2 API) enforces role-aware worktree
 // guards; static `permissions` below serve as a second defense layer mirroring PROTECTED + GENERATED in
 // scripts/agents/lib.mjs (kept in sync by agents.test.mjs).
 {

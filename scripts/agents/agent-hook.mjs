@@ -58,6 +58,7 @@ const EXECUTOR_DENY_COMMANDS = [
   [/\b(pnpm|npm|npx|yarn|bun)\b(\s+(--?[\w-]+(=\S+)?|(--dir|-C|--filter|--prefix)\s+\S+))*\s+(add|remove|rm|uninstall|update|up|upgrade|dlx\s+shadcn|i\s+[^-\s]|install\s+[^-\s])/, "adding/removing/updating packages needs the planner (task `unlock`)"],
   [/\bdotnet\s+(add\s+\S+\s+package|add\s+package|remove\s+\S+\s+package|package\s+(add|remove|update))\b|\bdotnet\s+outdated\b/, "adding/removing NuGet packages needs the planner (task `unlock`)"],
   [/\bdotnet\s+ef\s+migrations\s+remove\b/, "migrations are append-only — add a new one instead"],
+  [/\bagent-role\b|\.git[\\/]+(?:worktrees|app-agents)/i, "modifying worktree role or verify state files is not allowed"],
 ];
 
 /** @type {[RegExp, string][]} */
@@ -65,6 +66,7 @@ const REVIEWER_DENY_COMMANDS = [
   [/--no-verify\b|\bgit\b[^|;&]*\bcommit\b[^|;&]*\s-[a-zA-Z]*n[a-zA-Z]*\b/, "skipping git hooks is not allowed — fix what the hook reports"],
   [/\bLEFTHOOK(_EXCLUDE|_SKIP)?\s*=|\blefthook\s+(uninstall|install)\b|core\.hooksPath/i, "changing or disabling git hooks is not allowed"],
   [/\bdotnet\s+ef\s+migrations\s+remove\b/, "migrations are append-only"],
+  [/\bagent-role\b|\.git[\\/]+(?:worktrees|app-agents)/i, "modifying worktree role or verify state files is not allowed"],
 ];
 
 const WRITE_COMMANDS = /^(rm|del|erase|rmdir|rd|mv|move|cp|copy|xcopy|robocopy|ren|rename|truncate|touch|tee|chmod|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|Rename-Item|New-Item|Clear-Content|ni|ri|mi|ci|sc|ac)$/i;
@@ -78,7 +80,8 @@ const MCP_WRITE_NAME_HINT = /(?:^|_)(write|edit|patch|replace|create|delete|remo
 const MCP_EXEC_NAME_HINT = /(?:^|_)(exec|run|shell|command|terminal|bash)/i;
 const MCP_WRITE_ARG_HINT = /\b(apply|edit|write|create|delete|remove|move|rename|patch|replace)/i;
 const MCP_EXEC_ARG_HINT = /\b(run|exec|command|check|shell|terminal)/i;
-const PLANNER_ONLY_MCP = /^(?:mcp__nuget(?:__|$)|mcp_nuget_|nuget_mcp_)/i;
+const PLANNER_ONLY_MCP_NAME = /(?:^|__|_|-|\.)nuget(?:__|_|-|\.|$)/i;
+const MCP_WRAPPER_TOOLS = /^(?:mcp_tool|call_mcp_tool)$/i;
 
 const PATH_KEY_HINT = /^(file_?path|path|paths|target|target_?file|absolute_?path|notebook_?path|destination|dest|source|src)$/i;
 const IGNORE_CONTENT_KEYS = new Set(["content", "codecontent", "new_string", "old_string", "new_source", "replacement", "replacementcontent", "text", "command", "commandline"]);
@@ -136,10 +139,18 @@ function inspectTargetPath(root, candidate) {
  * @returns {{ root: string, role: AgentRole }}
  */
 export function resolveWorkspaceRole(hintDir) {
-  const start = hintDir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  const root = repoRoot(start);
-  const role = /** @type {AgentRole} */ (readRole(root));
-  return { root, role };
+  const candidates = [hintDir, process.env.CLAUDE_PROJECT_DIR, process.cwd(), resolve(import.meta.dirname, "..", "..")].filter(
+    /** @returns {d is string} */ (d) => Boolean(d),
+  );
+  for (const dir of candidates) {
+    const root = tryGit(["rev-parse", "--show-toplevel"], { cwd: dir });
+    if (root) {
+      const role = /** @type {AgentRole} */ (readRole(root));
+      return { root, role };
+    }
+  }
+  const root = repoRoot(candidates[0]);
+  return { root, role: /** @type {AgentRole} */ (readRole(root)) };
 }
 
 /**
@@ -302,22 +313,42 @@ export function preTool(root, role, call) {
 
   const task = activeTask(root);
   const lowerName = name.toLowerCase();
-  const isMcp = lowerName === "mcp_tool" || MCP_TOOL_PREFIX.test(lowerName);
+  const isMcpWrapper = MCP_WRAPPER_TOOLS.test(lowerName);
+  const isMcp = isMcpWrapper || MCP_TOOL_PREFIX.test(lowerName) || PLANNER_ONLY_MCP_NAME.test(lowerName);
   const argBlob = JSON.stringify(args);
 
-  if (isMcp && (PLANNER_ONLY_MCP.test(lowerName) || (lowerName === "mcp_tool" && /\bnuget\b/i.test(argBlob)))) {
+  if (
+    PLANNER_ONLY_MCP_NAME.test(lowerName) ||
+    (isMcpWrapper && /(?:^|["'._-])nuget(?:["'._-]|$)/i.test(argBlob))
+  ) {
     return deny("NuGet MCP is planner-only (it can upgrade packages); executors and reviewers cannot call it");
+  }
+
+  const commandRules = role === "reviewer" ? REVIEWER_DENY_COMMANDS : EXECUTOR_DENY_COMMANDS;
+  if (lowerName === "execute" && typeof args.code === "string") {
+    const code = args.code;
+    if (/\btools\.nuget\b|\bnuget\s*\.\s*\w+|["'`]nuget["'`]/i.test(code)) {
+      return deny("NuGet MCP is planner-only — executors and reviewers cannot call tools.nuget in Code Mode");
+    }
+    for (const [re, why] of commandRules) {
+      if (re.test(code)) return deny(why, code);
+    }
+    if (/\b(?:tools\.(?:edit|write|patch|move|delete)|writeFile|appendFile|rmSync|unlink|renameSync|copyFile)\b/i.test(code)) {
+      for (const m of code.matchAll(/["'`]([^"'`\r\n]{1,260})["'`]/g)) {
+        const err = checkWriteDestination(root, m[1], task);
+        if (err) return deny(err, code);
+      }
+    }
   }
 
   const isCommand =
     COMMAND_TOOLS.test(name) ||
-    (isMcp && (MCP_EXEC_NAME_HINT.test(lowerName) || (lowerName === "mcp_tool" && MCP_EXEC_ARG_HINT.test(argBlob))));
+    (isMcp && (MCP_EXEC_NAME_HINT.test(lowerName) || (isMcpWrapper && MCP_EXEC_ARG_HINT.test(argBlob))));
   const isWrite =
     WRITE_TOOLS.test(name) ||
-    (isMcp && (MCP_WRITE_NAME_HINT.test(lowerName) || (lowerName === "mcp_tool" && MCP_WRITE_ARG_HINT.test(argBlob))));
+    (isMcp && (MCP_WRITE_NAME_HINT.test(lowerName) || (isMcpWrapper && MCP_WRITE_ARG_HINT.test(argBlob))));
 
   if (isCommand) {
-    const commandRules = role === "reviewer" ? REVIEWER_DENY_COMMANDS : EXECUTOR_DENY_COMMANDS;
     for (const cmd of extractCommands(args)) {
       for (const [re, why] of commandRules) {
         if (re.test(cmd)) return deny(why, cmd);
@@ -531,7 +562,7 @@ export function handleAntigravityEvent(event) {
  * @param {string} [cwd]
  */
 export function evaluateOpenCodeTool(event, cwd) {
-  const { root, role } = resolveWorkspaceRole(cwd);
+  const { root, role } = resolveWorkspaceRole(event.location?.directory ?? event.directory ?? event.cwd ?? cwd);
   const res = preTool(root, role, {
     name: event.tool,
     args: event.args ?? event.input ?? {},
@@ -545,7 +576,7 @@ export function evaluateOpenCodeTool(event, cwd) {
  * @param {string} [cwd]
  */
 export function evaluateOpenCodeShell(event, cwd) {
-  const { root, role } = resolveWorkspaceRole(event.cwd ?? cwd);
+  const { root, role } = resolveWorkspaceRole(event.location?.directory ?? event.directory ?? event.cwd ?? cwd);
   const res = preTool(root, role, {
     name: "shell",
     args: { command: event.command },

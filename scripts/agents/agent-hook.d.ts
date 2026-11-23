@@ -110,16 +110,23 @@ export interface OpenCodeToolBeforeEvent {
   input?: Record<string, unknown>;
   sessionID?: string;
   callID?: string;
+  location?: { directory?: string };
+  directory?: string;
+  cwd?: string;
 }
 
 export interface OpenCodeShellBeforeEvent {
   command: string;
   cwd?: string;
+  location?: { directory?: string };
+  directory?: string;
 }
 
 export interface OpenCodePluginContext {
   directory?: string;
+  worktree?: string;
   cwd?: string;
+  location?: { directory?: string };
   tool: {
     hook(event: "execute.before" | "execute.after", handler: (event: OpenCodeToolBeforeEvent) => Promise<void> | void): Promise<void> | void;
   };

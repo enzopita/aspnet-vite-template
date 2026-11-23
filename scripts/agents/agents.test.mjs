@@ -12,7 +12,7 @@ import { PATTERNS, check } from "./task.mjs";
 const repo = resolve(import.meta.dirname, "..", "..");
 const hookScript = join(repo, "scripts", "agents", "agent-hook.mjs");
 const taskScript = join(repo, "scripts", "agents", "task.mjs");
-const pluginUrl = pathToFileURL(join(repo, ".opencode", "plugins", "app-guard.mjs")).href;
+const pluginUrl = pathToFileURL(join(repo, ".opencode", "plugins", "app-guard", "index.mjs")).href;
 
 function runHookCli(harness, event, payload, cwd) {
   const input = typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -704,18 +704,99 @@ public void Must_pass() { Assert.True(true); }
         );
       }
 
+      assert.equal(existsSync(join(repo, ".opencode/plugins/app-guard.mjs")), false);
+      assert.equal(existsSync(join(repo, ".opencode/plugins/app-guard/index.mjs")), true);
+
+      const { resolveWorkspaceRole } = await import("./agent-hook.mjs");
+      assert.doesNotThrow(() => resolveWorkspaceRole(tmpdir()));
+
       const mod = await import(`${pluginUrl}?v=${Date.now()}`);
       const hooks = {};
       await mod.default.setup({
-        directory: ws.taskDir,
+        location: { directory: ws.taskDir },
         tool: {
           hook: (n, fn) => {
             hooks[n] = fn;
           },
         },
+        shell: {
+          hook: (n, fn) => {
+            hooks[`shell:${n}`] = fn;
+          },
+        },
       });
       await assert.rejects(() => hooks["execute.before"]({ tool: "mcp__nuget__update_package", args: {} }), /NuGet MCP/i);
+      await assert.rejects(() => hooks["execute.before"]({ tool: "nuget_get_latest_package_version", args: {} }), /NuGet MCP/i);
+      await assert.rejects(
+        () =>
+          hooks["execute.before"]({
+            tool: "execute",
+            args: { code: 'const r = await tools.nuget.get_latest_package_version({ packageName: "Newtonsoft.Json" }); return r;' },
+          }),
+        /NuGet MCP/i,
+      );
+      await assert.rejects(
+        () => hooks["execute.before"]({ tool: "execute", args: { code: 'await tools.edit({ path: "web/.oxlintrc.json" });' } }),
+        /protected/i,
+      );
+      await assert.rejects(
+        () => hooks["execute.before"]({ tool: "execute", args: { code: 'await tools.shell({ command: "git push origin HEAD" });' } }),
+        /never push/i,
+      );
+      await assert.rejects(
+        () => hooks["shell:create.before"]({ command: 'Set-Content -Path "$g/agent-role" -Value "orchestrator"' }),
+        /worktree role/i,
+      );
       await assert.doesNotReject(() => hooks["execute.before"]({ tool: "mcp__context7__query-docs", args: {} }));
+      await assert.doesNotReject(() =>
+        hooks["execute.before"]({
+          tool: "execute",
+          args: { code: 'const r = await search({ namespace: "context7", limit: 5 }); return tools["microsoft-learn"].microsoft_docs_search({ query: "OpenApi" });' },
+        }),
+      );
+
+      // Plugin loaded without ctx.location/directory/cwd resolves cleanly to pluginWorktree instead of locking out.
+      const fallbackHooks = {};
+      await mod.default.setup({
+        tool: {
+          hook: (n, fn) => {
+            fallbackHooks[n] = fn;
+          },
+        },
+      });
+      await assert.doesNotReject(() => fallbackHooks["execute.before"]({ tool: "read", args: { path: "AGENTS.md" } }));
+
+      // Antigravity ACP call_mcp_tool wrapper blocks app-knowledge_nuget for executor/reviewer and allows docs MCPs.
+      assert.equal(
+        runHookCli(
+          "antigravity",
+          "pre-tool",
+          {
+            toolCall: {
+              name: "call_mcp_tool",
+              args: { ServerName: "app-knowledge_nuget", ToolName: "update_package_version", Arguments: {} },
+            },
+            cwd: ws.taskDir,
+          },
+          ws.taskDir,
+        ).json.decision,
+        "deny",
+      );
+      assert.equal(
+        runHookCli(
+          "antigravity",
+          "pre-tool",
+          {
+            toolCall: {
+              name: "call_mcp_tool",
+              args: { ServerName: "app-knowledge_microsoft-learn", ToolName: "microsoft_docs_search", Arguments: { query: "OpenApi3_1" } },
+            },
+            cwd: ws.taskDir,
+          },
+          ws.taskDir,
+        ).json.decision,
+        "allow",
+      );
 
       assert.equal(
         runHookCli("claude", "pre-tool", { tool_name: "mcp__nuget__update_package", tool_input: {}, cwd: ws.mainDir }, ws.mainDir).json

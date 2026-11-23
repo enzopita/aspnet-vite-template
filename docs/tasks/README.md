@@ -38,7 +38,7 @@ All of them are in `node scripts/agents/task.mjs help`. The ones you type:
 
 The fence lives in git hooks and trusted CI, so every harness gets the same limits. Unified harness adapters
 (`scripts/agents/agent-hook.mjs` wired via `.claude/settings.json` for Claude Code, `.agents/hooks.json` for
-Antigravity, and `.opencode/plugins/app-guard.mjs` + `opencode.jsonc` for OpenCode) resolve role from worktree `agent-role`
+Antigravity, and `.opencode/plugins/app-guard/index.mjs` + `opencode.jsonc` for OpenCode) resolve role from worktree `agent-role`
 and stop forbidden calls before execution:
 
 - Orchestrators work in the main checkout without executor restrictions.
