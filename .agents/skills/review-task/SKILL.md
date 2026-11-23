@@ -31,20 +31,22 @@ Done when every changed line has been read and every finding has a `file:line`.
 
 ## 3. Run the gates yourself
 
-From the executor's worktree (or `git worktree add ../app-review-NNNN task/NNNN-<slug>`), run
+Create the reviewer worktree (`node scripts/agents/task.mjs review NNNN`), which opens `../<repo>-review-NNNN` on
+`review/NNNN-<slug>` from the task head with `agent-role = reviewer`. Inside that worktree, run
 `node scripts/agents/task.mjs verify --task NNNN`. For backend work also run the full `dotnet test` (needs Docker).
 A pass reported in the Executor log doesn't count until you have seen it yourself.
 
 ## 4. Decide
 
-- **Polish**: findings you can fix in less time than it takes to explain them. Fix them on the branch. Commit with
-  `APP_TASK_FENCE=off` only when the fix lies outside `allow`.
-- **Send back**: anything bigger, or anything the executor will repeat. Write numbered, actionable findings under
-  `## Review` (`file:line`, what is wrong, what right looks like), set `status: changes-requested`, and commit with
-  `APP_TASK_FENCE=off`. Give the user `node scripts/agents/task.mjs brief NNNN` to resume the executor.
-- **Merge**: once it is clean, write a short summary under `## Review` and set `status: done`. Then ask the user before
-  squash-merging into `main` with a Conventional Commit message for the whole task. Remove the worktree and branch
-  afterwards.
+- **Polish**: findings inside the task's `allow` paths you can fix quickly. Fix them on `review/NNNN-<slug>` and commit
+  normally (never outside `allow`; changes outside `allow` belong to a new task or to `main` after merge).
+- **Send back**: anything bigger, anything outside `allow`, or anything the executor will repeat. Write numbered,
+  actionable findings under `## Review` (`file:line`, what is wrong, what right looks like), set
+  `status: changes-requested`, and commit on `review/NNNN-<slug>` (then fast-forward/update `task/NNNN-<slug>` if
+  resuming it). Give the user `node scripts/agents/task.mjs brief NNNN` to resume the executor.
+- **Merge**: once clean, write a short summary under `## Review`, set `status: done`, commit, and ask before
+  squash-merging `review/NNNN-<slug>` into `main` with a Conventional Commit message for the whole task. Remove the
+  worktrees and branches afterwards.
 
 ## 5. Tighten the harness
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Task tooling for planner → executor → reviewer work (ADR 0008). Usage: node scripts/agents/task.mjs help
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runVerify } from "../verify.mjs";
 import {
@@ -13,12 +13,15 @@ import {
   MIGRATIONS,
   MIGRATION_SNAPSHOT,
   PROTECTED,
+  REVIEW_BRANCH_PREFIX,
+  REVIEWER_STATUSES,
   STATUSES,
   TASKS_DIR,
   currentBranch,
   findTaskFile,
   frozenBody,
   git,
+  isReviewBranch,
   list,
   matchesAny,
   parseTask,
@@ -29,6 +32,7 @@ import {
   taskFiles,
   taskIdFromBranch,
   tryGit,
+  writeRole,
   writeState,
 } from "./lib.mjs";
 
@@ -36,14 +40,14 @@ const HELP = `App task tooling (ADR 0008)
 
   list                         tasks and their status
   new <slug> --title "<t>"     create docs/tasks/NNNN-<slug>.md from the template (planner)
-  start <id> [--worktree]      create/checkout the task branch (or a sibling worktree) and mark it in-progress
+  start <id>                   create executor worktree (../<repo>-task-NNNN on task/NNNN-*) and mark in-progress
+  review <id>                  create reviewer worktree (../<repo>-review-NNNN on review/NNNN-*) from task/* head
   brief <id>                   print the prompt to paste into the executor agent
   check [--staged|--ref <r>]   scope fence: paths, protected files, task file
-        [--task <id>] [--json] [--hook]
+        [--branch <b>] [--task <id>] [--json] [--hook]
   verify [--task <id>]         check + the quality gates for the touched areas + the task's own verify commands
 
-The fence is off outside task/* branches. Reviewers and humans may bypass it with APP_TASK_FENCE=off;
-executor agents are blocked from doing so by their harness adapters.`;
+Roles come from location (worktree .git/worktrees/<name>/agent-role), while the git/CI fence applies one rule per branch.`;
 
 // ---------------------------------------------------------------------------------------------------------------
 // code rules live in native analyzers, GovernanceTests, Oxlint, and scripts/lint-extra.mjs (PATTERNS is empty)
@@ -85,8 +89,8 @@ function collect(root, mode, ref) {
 // ---------------------------------------------------------------------------------------------------------------
 // check
 
-function resolveTask(root, opts, ref) {
-  const id = opts.task ?? taskIdFromBranch(opts.mode === "ref" ? ref : currentBranch(root));
+function resolveTask(root, opts, branchName) {
+  const id = opts.task ?? taskIdFromBranch(branchName);
   if (!id) return undefined;
   const file = findTaskFile(root, id);
   if (!file) throw new Error(`task ${id}: no ${TASKS_DIR}/${id}-*.md`);
@@ -96,9 +100,11 @@ function resolveTask(root, opts, ref) {
 export function check(root, opts = {}) {
   const errors = [];
   const warnings = [];
-  const task = resolveTask(root, opts, opts.ref);
+  const branchName = opts.branch ?? (opts.mode === "ref" ? opts.ref : currentBranch(root));
+  const task = resolveTask(root, opts, branchName);
   if (!task) return { skipped: true, errors, warnings };
 
+  const review = isReviewBranch(branchName);
   const ch = collect(root, opts.mode ?? "worktree", opts.ref);
   const baseText = ch.readBase(task.file);
   if (!baseText) {
@@ -119,17 +125,20 @@ export function check(root, opts = {}) {
     return { task, errors, warnings, files: ch.files };
   }
 
-  // The spec is the contract: the executor only moves `status` and writes the "Executor log" section.
+  // The spec is the contract: executors move `status` and "## Executor log"; reviewers may also update `status` and "## Review".
   for (const key of new Set([...Object.keys(base.meta), ...Object.keys(now.meta)])) {
     if (key === "status") continue;
     if (JSON.stringify(base.meta[key]) !== JSON.stringify(now.meta[key]))
-      errors.push(`${task.file}: frontmatter \`${key}\` changed — only \`status\` is the executor's`);
+      errors.push(`${task.file}: frontmatter \`${key}\` changed — only \`status\` is editable`);
   }
+  const allowedStatuses = review ? REVIEWER_STATUSES : EXECUTOR_STATUSES;
   if (!STATUSES.includes(now.meta.status)) errors.push(`${task.file}: unknown status \`${now.meta.status}\``);
-  else if (now.meta.status !== base.meta.status && !EXECUTOR_STATUSES.includes(now.meta.status))
-    errors.push(`${task.file}: status \`${now.meta.status}\` is set by the reviewer; use ${EXECUTOR_STATUSES.join(" | ")}`);
-  if (frozenBody(base.body) !== frozenBody(now.body))
-    errors.push(`${task.file}: spec text changed — write only under "## Executor log" (ticking checkboxes is fine)`);
+  else if (now.meta.status !== base.meta.status && !allowedStatuses.includes(now.meta.status))
+    errors.push(`${task.file}: status \`${now.meta.status}\` is set by the reviewer; use ${allowedStatuses.join(" | ")}`);
+  if (frozenBody(base.body, { allowReview: review }) !== frozenBody(now.body, { allowReview: review }))
+    errors.push(
+      `${task.file}: spec text changed — write only under "## Executor log"${review ? ' / "## Review"' : ""} (ticking checkboxes is fine)`,
+    );
 
   const allow = list(base.meta.allow);
   const unlock = list(base.meta.unlock);
@@ -148,12 +157,12 @@ export function check(root, opts = {}) {
     }
   }
 
-  return { task, status: now.meta.status, base: ch.base, errors, warnings, files: ch.files };
+  return { task, status: now.meta.status, review, base: ch.base, errors, warnings, files: ch.files };
 }
 
 function printCheck(result) {
   if (result.skipped) {
-    console.log("· not on a task branch — fence skipped");
+    console.log("· not on a task/* or review/* branch — fence skipped");
     return;
   }
   for (const w of result.warnings) console.log(`⚠ ${w}`);
@@ -190,13 +199,10 @@ function verify(root, opts) {
   const result = check(root, { ...opts, mode: "worktree" });
   printCheck(result);
   if (result.skipped) {
-    console.error("✖ verify needs a task: run it on a task/* branch or pass --task <id>");
+    console.error("✖ verify needs a task: run it on a task/* or review/* branch, or pass --task <id>");
     return 1;
   }
-  // Reviewers polish task branches outside `allow` (docs/tasks/README.md); executor harnesses block this variable.
-  const reviewer = process.env.APP_TASK_FENCE === "off";
-  if (result.errors.length && !reviewer) return 1;
-  if (result.errors.length) console.log("⚠ APP_TASK_FENCE=off: fence violations ignored, running the gates anyway");
+  if (result.errors.length) return 1;
 
   const task = readTask(root, result.task.file);
   const res = runVerify(root, { mode: "task", files: result.files, task });
@@ -208,18 +214,13 @@ function verify(root, opts) {
 
   // Gates may regenerate files (API client, catalogs): re-run the fence on the final tree before recording success.
   const after = check(root, { ...opts, mode: "worktree" });
-  if (reviewer) {
-    console.log(`
-✔ task ${result.task.id}: all ${res.gates.length} gate(s) passed (fence bypassed, nothing recorded).`);
-    return 0;
-  }
   if (after.errors.length) {
     printCheck(after);
     return 1;
   }
   const fp = fingerprint(root, after.base);
   writeState(root, `verify-${result.task.id}.json`, { ok: true, at: new Date().toISOString(), fingerprint: fp, ran: res.ran });
-  console.log(`\n✔ task ${result.task.id}: all ${res.gates.length} gate(s) passed. Commit, then set status: review.`);
+  console.log(`\n✔ task ${result.task.id}: all ${res.gates.length} gate(s) passed.`);
   return 0;
 }
 
@@ -238,6 +239,11 @@ function setStatus(path, status) {
 
 function branchFor(task) {
   return task.meta.branch || `${BRANCH_PREFIX}${task.file.replace(`${TASKS_DIR}/`, "").replace(/\.md$/, "")}`;
+}
+
+function reviewBranchFor(task) {
+  const suffix = task.file.replace(`${TASKS_DIR}/`, "").replace(/\.md$/, "");
+  return `${REVIEW_BRANCH_PREFIX}${suffix}`;
 }
 
 function cmdList(root) {
@@ -262,7 +268,7 @@ function cmdNew(root, slug, title) {
   console.log(file);
 }
 
-function cmdStart(root, id, worktree) {
+function cmdStart(root, id) {
   const file = findTaskFile(root, id);
   if (!file) throw new Error(`no task ${id}`);
   const task = readTask(root, file);
@@ -273,24 +279,43 @@ function cmdStart(root, id, worktree) {
   const branch = branchFor(task);
   const exists = tryGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: root });
 
-  let dir = root;
-  if (worktree) {
-    dir = resolve(root, "..", `${root.split(/[\\/]/).pop()}-task-${task.meta.id}`);
-    if (!existsSync(dir)) git(["worktree", "add", dir, ...(exists ? [branch] : ["-b", branch, MAIN_BRANCH])], { cwd: root });
-  } else {
-    if (git(["status", "--porcelain", "--untracked-files=no"], { cwd: root })) throw new Error("working tree has changes — commit or stash first");
-    git(["switch", ...(exists ? [branch] : ["-c", branch, MAIN_BRANCH])], { cwd: root });
-  }
+  const dir = resolve(root, "..", `${basename(root)}-task-${task.meta.id}`);
+  if (!existsSync(dir)) git(["worktree", "add", dir, ...(exists ? [branch] : ["-b", branch, MAIN_BRANCH])], { cwd: root });
+  writeRole(dir, "executor");
+
   if (task.meta.status !== "in-progress") setStatus(join(dir, file), "in-progress");
-  console.log(`✔ task ${task.meta.id} on ${branch}${worktree ? ` in ${dir}` : ""}\n`);
+  console.log(`✔ executor worktree for task ${task.meta.id}: ${dir} (${branch})\n`);
   cmdBrief(dir, id);
+}
+
+function cmdReview(root, id) {
+  const file = findTaskFile(root, id);
+  if (!file) throw new Error(`no task ${id}`);
+  const task = readTask(root, file);
+  const taskBranch = branchFor(task);
+  if (tryGit(["rev-parse", "--verify", "--quiet", `refs/heads/${taskBranch}`], { cwd: root }) === undefined)
+    throw new Error(`task branch ${taskBranch} does not exist yet — run \`start ${id}\` first`);
+
+  const reviewBranch = reviewBranchFor(task);
+  const reviewExists = tryGit(["rev-parse", "--verify", "--quiet", `refs/heads/${reviewBranch}`], { cwd: root });
+  const dir = resolve(root, "..", `${basename(root)}-review-${task.meta.id}`);
+  if (!existsSync(dir)) {
+    git(["worktree", "add", dir, ...(reviewExists ? [reviewBranch] : ["-b", reviewBranch, taskBranch])], { cwd: root });
+  }
+  writeRole(dir, "reviewer");
+
+  console.log(`✔ reviewer worktree for task ${task.meta.id}: ${dir} (${reviewBranch})
+Follow .agents/skills/review-task/SKILL.md:
+- Review \`git diff ${MAIN_BRANCH}...HEAD\`, polish only inside the task's \`allow\` paths, and run \`node scripts/agents/task.mjs verify --task ${task.meta.id}\`.
+- Changes outside \`allow\` belong to a new task or to ${MAIN_BRANCH} after merge.`);
 }
 
 function cmdBrief(root, id) {
   const file = findTaskFile(root, id);
   if (!file) throw new Error(`no task ${id}`);
   const task = readTask(root, file);
-  console.log(`----- paste into the executor (Antigravity / OpenCode) -----
+  console.log(`----- paste into the executor (Claude Code / Antigravity / OpenCode) -----
+Worktree: ${root}
 You are the EXECUTOR for task ${task.meta.id} ("${task.meta.title}") in the App repository.
 
 1. Read AGENTS.md completely, then ${file} completely, then every file the task lists under "Context" and
@@ -315,6 +340,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--staged") opts.mode = "staged";
     else if (a === "--ref") (opts.mode = "ref"), (opts.ref = argv[++i]);
+    else if (a === "--branch") opts.branch = argv[++i];
     else if (a === "--task") opts.task = argv[++i]?.padStart(4, "0");
     else if (a === "--title") opts.title = argv[++i];
     else if (a.startsWith("--")) opts[a.slice(2)] = true;
@@ -333,11 +359,12 @@ function main() {
     case "new":
       return cmdNew(root, opts._[0], opts.title), 0;
     case "start":
-      return cmdStart(root, opts._[0], opts.worktree), 0;
+      return cmdStart(root, opts._[0]), 0;
+    case "review":
+      return cmdReview(root, opts._[0]), 0;
     case "brief":
       return cmdBrief(root, opts._[0]), 0;
     case "check": {
-      if (opts.hook && process.env.APP_TASK_FENCE === "off") return 0;
       const result = check(root, opts);
       if (opts.json) console.log(JSON.stringify(result, null, 2));
       else if (!(opts.hook && result.skipped)) printCheck(result);

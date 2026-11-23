@@ -1,0 +1,34 @@
+{
+  "app-task-context": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node ../scripts/agents/agent-hook.mjs antigravity session-start",
+        "timeout": 10
+      }
+    ]
+  },
+  "app-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ../scripts/agents/agent-hook.mjs antigravity pre-tool",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "app-definition-of-done": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node ../scripts/agents/agent-hook.mjs antigravity stop",
+        "timeout": 60
+      }
+    ]
+  }
+}
