@@ -1,0 +1,58 @@
+# Trusted task fence check (ADR 0008, ADR 0009):
+# Runs on pull_request_target using scripts from `main`; the PR head is fetched strictly as git data and never checked out.
+name: fence
+
+on:
+  pull_request_target:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+
+      - name: Check task fence
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$PR_HEAD_REF" =~ ^task/ ]]; then
+            echo "Not a task/* branch ($PR_HEAD_REF) — task fence skipped."
+            exit 0
+          fi
+
+          if [[ ! "$PR_HEAD_REF" =~ ^task/([0-9]{4})(-|$) ]]; then
+            echo "Invalid task branch name: $PR_HEAD_REF (expected task/NNNN-<slug>)" >&2
+            exit 1
+          fi
+
+          TASK_ID="${BASH_REMATCH[1]}"
+          git show-ref --verify --quiet refs/heads/main || git branch main HEAD
+          git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+          FETCHED_SHA="$(git rev-parse FETCH_HEAD)"
+          if [[ "$FETCHED_SHA" != "$PR_HEAD_SHA" ]]; then
+            echo "Fetched PR head ($FETCHED_SHA) does not match event head ($PR_HEAD_SHA)." >&2
+            exit 1
+          fi
+
+          node scripts/agents/task.mjs check --ref "$PR_HEAD_SHA" --task "$TASK_ID"

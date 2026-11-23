@@ -1,0 +1,4 @@
+# Governance, CI workflows, and agent tooling require code owner review.
+/.github/ @enzopita
+/scripts/ @enzopita
+/governance/ @enzopita

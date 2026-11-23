@@ -166,6 +166,7 @@ verify: []
     git("config", "core.hooksPath", "/dev/null");
     put("docs/tasks/0001-example.md", spec());
     put("lefthook.yml", "x: 1\n");
+    put(".github/workflows/fence.yml", "name: fence\n");
     put("src/Modules/Orders/App.Orders/Persistence/Migrations/1_Init.cs", "// init\n");
     git("add", "-A");
     git("commit", "-qm", "init");
@@ -244,6 +245,24 @@ verify: []
       errorsAfter(() => put("tests/A/ATests.cs", "if (Count() != 1 && !(done)) { }\n")).join("\n"),
       /null-forgiving/,
     ));
+  test("checks PR head as data from main and catches tampered fence workflow", () => {
+    git("reset", "-q", "--hard");
+    git("clean", "-qfd");
+    git("switch", "-qc", "pr-tamper", "main");
+    try {
+      put(".github/workflows/fence.yml", "name: tampered\n");
+      git("add", "-A");
+      git("commit", "-qm", "tamper fence");
+      const headSha = git("rev-parse", "HEAD").trim();
+      git("switch", "-q", "main");
+      const res = check(dir, { mode: "ref", ref: headSha, task: "0001" });
+      assert.match(res.errors.join("\n"), /\.github\/workflows\/fence\.yml: protected file/);
+      assert.throws(() => check(dir, { mode: "ref", ref: headSha, task: "9999" }), /no docs\/tasks\/9999-\*\.md/);
+    } finally {
+      git("switch", "-q", "task/0001-example");
+      git("branch", "-qD", "pr-tamper");
+    }
+  });
 });
 
 describe("gatesFor", () => {
