@@ -78,6 +78,7 @@ const MCP_WRITE_NAME_HINT = /(?:^|_)(write|edit|patch|replace|create|delete|remo
 const MCP_EXEC_NAME_HINT = /(?:^|_)(exec|run|shell|command|terminal|bash)/i;
 const MCP_WRITE_ARG_HINT = /\b(apply|edit|write|create|delete|remove|move|rename|patch|replace)/i;
 const MCP_EXEC_ARG_HINT = /\b(run|exec|command|check|shell|terminal)/i;
+const PLANNER_ONLY_MCP = /^(?:mcp__nuget(?:__|$)|mcp_nuget_|nuget_mcp_)/i;
 
 const PATH_KEY_HINT = /^(file_?path|path|paths|target|target_?file|absolute_?path|notebook_?path|destination|dest|source|src)$/i;
 const IGNORE_CONTENT_KEYS = new Set(["content", "codecontent", "new_string", "old_string", "new_source", "replacement", "replacementcontent", "text", "command", "commandline"]);
@@ -192,6 +193,9 @@ function checkWriteDestination(root, candidate, task) {
   }
   const rel = inspected.rel;
   if (!rel) return undefined;
+  if (task && matchesAny(rel, list(task.meta?.frozen))) {
+    return `${rel} is listed under frozen: — never edit frozen tests; if the contract is wrong, set status: blocked.`;
+  }
   if (task && (rel === task.file || matchesAny(rel, list(task.meta?.unlock)))) return undefined;
   if (matchesAny(rel, GENERATED)) {
     return `${rel} is generated — run its generator (pnpm --dir web run api:generate / build), never edit it`;
@@ -300,6 +304,10 @@ export function preTool(root, role, call) {
   const lowerName = name.toLowerCase();
   const isMcp = lowerName === "mcp_tool" || MCP_TOOL_PREFIX.test(lowerName);
   const argBlob = JSON.stringify(args);
+
+  if (isMcp && (PLANNER_ONLY_MCP.test(lowerName) || (lowerName === "mcp_tool" && /\bnuget\b/i.test(argBlob)))) {
+    return deny("NuGet MCP is planner-only (it can upgrade packages); executors and reviewers cannot call it");
+  }
 
   const isCommand =
     COMMAND_TOOLS.test(name) ||

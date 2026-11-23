@@ -11,6 +11,7 @@ export interface TaskMeta {
   status: string;
   allow?: string | string[];
   unlock?: string | string[];
+  frozen?: string | string[];
   scope?: string;
 }
 

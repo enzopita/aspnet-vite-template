@@ -22,10 +22,13 @@ Read the spec, the Executor log, and the full diff: `git diff main...task/NNNN-<
   from Out of scope crept in.
 - **The reference shape**: same structure, visibility, error handling and test style as the reference files.
 - **AGENTS.md and the ADRs it touches.**
-- **Drift typical of weaker models**: assertions that can't fail, tests that restate the implementation, swallowed
+- **Weak-model drift**: assertions that can't fail, tests that restate the implementation, swallowed
   exceptions or `catch {}`, null-forgiving `!`, unused or duplicated helpers, re-implemented utilities that already
   exist, comments narrating the obvious, hard-coded text, Portuguese identifiers or comments, magic numbers,
   `double`/`float` used for money or currency values (use `decimal`).
+- **Unverified APIs & contract test fidelity**: any new package, API, option, or CLI flag not previously in the repo
+  without a URL in `## Verified facts` or `## Executor log` → `### Sources` is a finding. If `task.mjs check` warned that a
+  spec-embedded contract test diverged, verify that the justification in `## Executor log` is sound.
 
 Done when every changed line has been read and every finding has a `file:line`.
 
@@ -48,14 +51,23 @@ A pass reported in the Executor log doesn't count until you have seen it yoursel
   squash-merging `review/NNNN-<slug>` into `main` with a Conventional Commit message for the whole task. Remove the
   worktrees and branches afterwards.
 
-## 5. Tighten the harness
+## 5. Record findings & tighten the harness
 
-For each finding, ask whether a machine could have caught it. If yes, propose the cheapest guard, ranked by how
-early it fires:
+Record every review finding in `docs/agents/findings.jsonl` (one JSON object per line, updated from the main checkout
+on `main` since `docs/agents/**` is `PROTECTED`):
+
+```json
+{"task":"0001","model":"<executor-model>","origin":"executor|spec|harness","category":"<kebab-category>","file":"<path>","guard_created":null}
+```
+
+Use `origin` to classify whether the root cause sits in the `executor`, the `spec`, or the `harness`. For each finding,
+ask whether a machine could have caught it — repeated findings (2×) become guard candidates, ranked by how early they
+fire:
 
 1. an analyzer or Oxlint rule (`governance/BannedSymbols*.txt`, `.editorconfig`, `web/.oxlintrc.json`),
 2. a `GovernanceTests` or `App.ArchitectureTests` rule,
 3. a residual pattern in `scripts/lint-extra.mjs`,
 4. a sentence in `.agents/skills/execute-task/SKILL.md` or a sharper section in the spec template.
 
-Done when every finding is either guarded, or you have told the user why it can't be.
+When you add a guard, set `guard_created` in the entry. Done when every finding is recorded in
+`docs/agents/findings.jsonl` and either guarded or explained to the user.

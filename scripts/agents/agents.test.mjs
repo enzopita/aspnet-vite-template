@@ -439,3 +439,291 @@ describe("opencode adapter, bypass removal, and empty PATTERNS", () => {
     assert.doesNotMatch(readFileSync(join(repo, "lefthook.yml"), "utf8"), new RegExp("LEFTHOOK" + "=0"));
   });
 });
+
+describe("frozen tests, spec test divergence, area AGENTS.md split, and knowledge/MCP step 6 guards", () => {
+  test("frozen: blocks executor edits both when committed on main and after initial task commit", () => {
+    const ws = createTempWorkspace();
+    try {
+      const frozenMain = join(ws.mainDir, "tests/ContractTests.cs");
+      mkdirSync(dirname(frozenMain), { recursive: true });
+      writeFileSync(frozenMain, "// existing contract test\n");
+      writeFileSync(
+        join(ws.mainDir, "docs/tasks/0002-frozen.md"),
+        `---
+id: "0002"
+title: Frozen contract
+status: ready
+scope: orders
+allow:
+  - src/Modules/Orders/**
+  - tests/App.Api.IntegrationTests/Orders/**
+unlock: []
+frozen:
+  - tests/ContractTests.cs
+  - tests/NewContractTests.cs
+verify: []
+---
+# 0002 · Frozen contract
+
+## Steps
+1. Implement
+
+## Acceptance criteria
+- [ ] works
+
+## Executor log
+`,
+      );
+      execFileSync("git", ["add", "-A"], { cwd: ws.mainDir });
+      execFileSync("git", ["commit", "-qm", "chore: add frozen spec"], { cwd: ws.mainDir });
+
+      const startRes = spawnSync(process.execPath, [taskScript, "start", "0002"], { cwd: ws.mainDir, encoding: "utf8" });
+      assert.equal(startRes.status, 0, startRes.stderr);
+
+      const task2Dir = join(ws.parent, `${basename(ws.mainDir)}-task-0002`);
+      // PreToolUse denies editing a frozen file in executor worktree, allows in main checkout.
+      assert.equal(
+        runHookCli(
+          "claude",
+          "pre-tool",
+          { tool_name: "Edit", tool_input: { file_path: join(task2Dir, "tests/ContractTests.cs") }, cwd: task2Dir },
+          task2Dir,
+        ).json.hookSpecificOutput.permissionDecision,
+        "deny",
+      );
+      assert.equal(
+        runHookCli(
+          "antigravity",
+          "pre-tool",
+          { toolCall: { name: "edit_file", args: { Path: join(task2Dir, "tests/ContractTests.cs") } }, cwd: task2Dir },
+          task2Dir,
+        ).json.decision,
+        "deny",
+      );
+      assert.equal(
+        runHookCli(
+          "claude",
+          "pre-tool",
+          { tool_name: "Edit", tool_input: { file_path: join(ws.mainDir, "tests/ContractTests.cs") }, cwd: ws.mainDir },
+          ws.mainDir,
+        ).json.hookSpecificOutput.permissionDecision,
+        "allow",
+      );
+
+      // Editing a frozen file from main fails task.mjs check().
+      writeFileSync(join(task2Dir, "tests/ContractTests.cs"), "// weakened\n");
+      const mainFrozenCheck = check(task2Dir, { mode: "worktree" });
+      assert.ok(mainFrozenCheck.errors.some((e) => /tests\/ContractTests\.cs: frozen file/.test(e)));
+      writeFileSync(join(task2Dir, "tests/ContractTests.cs"), "// existing contract test\n");
+
+      // Frozen file added in first commit on task/* stays frozen in later commits.
+      const newFrozen = join(task2Dir, "tests/NewContractTests.cs");
+      writeFileSync(newFrozen, "// committed in first task commit\n");
+      execFileSync("git", ["add", "tests/NewContractTests.cs"], { cwd: task2Dir });
+      execFileSync("git", ["commit", "-qm", "test(orders): add frozen black-box tests"], { cwd: task2Dir });
+      assert.deepEqual(check(task2Dir, { mode: "worktree" }).errors, []);
+
+      // Modifying a separate allowed file passes cleanly.
+      const impl = join(task2Dir, "src/Modules/Orders/App.Orders/Impl.cs");
+      mkdirSync(dirname(impl), { recursive: true });
+      writeFileSync(impl, "namespace App.Orders;\n");
+      execFileSync("git", ["add", "-A"], { cwd: task2Dir });
+      execFileSync("git", ["commit", "-qm", "feat(orders): implement slice"], { cwd: task2Dir });
+      assert.deepEqual(check(task2Dir, { mode: "worktree" }).errors, []);
+
+      // Modifying NewContractTests.cs in commit #2 triggers a frozen error.
+      writeFileSync(newFrozen, "// altered later\n");
+      const secondFrozenCheck = check(task2Dir, { mode: "worktree" });
+      assert.ok(secondFrozenCheck.errors.some((e) => /tests\/NewContractTests\.cs: frozen file/.test(e)));
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("spec-copied test divergence emits warning when altered and passes cleanly when matching", () => {
+    const ws = createTempWorkspace();
+    try {
+      writeFileSync(
+        join(ws.mainDir, "docs/tasks/0002-contract.md"),
+        `---
+id: "0002"
+title: Contract snippet
+status: ready
+scope: orders
+allow:
+  - tests/App.Api.IntegrationTests/Orders/**
+unlock: []
+frozen: []
+verify: []
+---
+# 0002 · Contract snippet
+
+## Contract tests
+\`\`\`csharp tests/App.Api.IntegrationTests/Orders/ExampleTests.cs
+[Fact]
+public void Must_pass() { Assert.True(true); }
+\`\`\`
+
+## Executor log
+`,
+      );
+      execFileSync("git", ["add", "-A"], { cwd: ws.mainDir });
+      execFileSync("git", ["commit", "-qm", "docs: add spec with contract test"], { cwd: ws.mainDir });
+      assert.equal(spawnSync(process.execPath, [taskScript, "start", "0002"], { cwd: ws.mainDir, encoding: "utf8" }).status, 0);
+
+      const task2Dir = join(ws.parent, `${basename(ws.mainDir)}-task-0002`);
+      const targetTest = join(task2Dir, "tests/App.Api.IntegrationTests/Orders/ExampleTests.cs");
+      mkdirSync(dirname(targetTest), { recursive: true });
+      writeFileSync(targetTest, "namespace App.Api.IntegrationTests.Orders;\n\n[Fact]\npublic void Must_pass() { Assert.True(true); }\n");
+
+      const clean = check(task2Dir, { mode: "worktree" });
+      assert.deepEqual(clean.errors, []);
+      assert.deepEqual(clean.warnings, []);
+
+      writeFileSync(targetTest, "namespace App.Api.IntegrationTests.Orders;\n\n[Fact]\npublic void Changed_name() {}\n");
+      const diverged = check(task2Dir, { mode: "worktree" });
+      assert.deepEqual(diverged.errors, []);
+      assert.equal(diverged.warnings.length, 1);
+      assert.match(diverged.warnings[0], /diverges from the snippet/);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("SessionStart injects only the area AGENTS.md matching task allow globs", () => {
+    const ws = createTempWorkspace();
+    try {
+      const addTask = (id, slug, allowLine) =>
+        writeFileSync(
+          join(ws.mainDir, `docs/tasks/${id}-${slug}.md`),
+          `---\nid: "${id}"\ntitle: ${slug}\nstatus: ready\nscope: orders\nallow:\n  - ${allowLine}\nunlock: []\nverify: []\n---\n# ${slug}\n\n## Executor log\n`,
+        );
+      addTask("0002", "backend-only", "src/Modules/Orders/**");
+      addTask("0003", "frontend-only", "web/src/features/orders/**");
+      execFileSync("git", ["add", "-A"], { cwd: ws.mainDir });
+      execFileSync("git", ["commit", "-qm", "docs: add area specs"], { cwd: ws.mainDir });
+
+      assert.equal(spawnSync(process.execPath, [taskScript, "start", "0002"], { cwd: ws.mainDir, encoding: "utf8" }).status, 0);
+      assert.equal(spawnSync(process.execPath, [taskScript, "start", "0003"], { cwd: ws.mainDir, encoding: "utf8" }).status, 0);
+
+      const beDir = join(ws.parent, `${basename(ws.mainDir)}-task-0002`);
+      const feDir = join(ws.parent, `${basename(ws.mainDir)}-task-0003`);
+
+      const beCtx = runHookCli("claude", "session-start", { cwd: beDir }, beDir).json.hookSpecificOutput?.additionalContext ?? "";
+      assert.match(beCtx, /Backend Area Rules/);
+      assert.doesNotMatch(beCtx, /Frontend Area Rules/);
+
+      const feMsg = runHookCli("antigravity", "session-start", { cwd: feDir }, feDir).json.injectSteps?.[0]?.systemMessage?.systemMessage ?? "";
+      assert.match(feMsg, /Frontend Area Rules/);
+      assert.doesNotMatch(feMsg, /Backend Area Rules/);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("knowledge artifacts, skills, MCP configs, and planner-only NuGet guard are properly wired", async () => {
+    // findings.jsonl exists and any non-empty line is valid JSON with expected fields
+    const findingsPath = join(repo, "docs/agents/findings.jsonl");
+    assert.ok(existsSync(findingsPath));
+    for (const line of readFileSync(findingsPath, "utf8").split(/\r?\n/).filter(Boolean)) {
+      const obj = JSON.parse(line);
+      for (const key of ["task", "model", "origin", "category", "file", "guard_created"]) assert.ok(key in obj);
+    }
+
+    // _template.md has Verified facts, frozen:, named test criterion guidance, and Contract tests
+    const tpl = readFileSync(join(repo, "docs/tasks/_template.md"), "utf8");
+    assert.match(tpl, /^frozen:/m);
+    assert.match(tpl, /^## Verified facts/m);
+    assert.match(tpl, /^## Contract tests/m);
+    assert.match(tpl, /named test/i);
+
+    // Skills exist in .agents/skills and resolve through .claude/skills symlink
+    for (const skill of ["plan-task", "execute-task", "review-task", "diff-audit", "look-it-up"]) {
+      assert.ok(existsSync(join(repo, `.agents/skills/${skill}/SKILL.md`)), `missing .agents skill ${skill}`);
+      assert.ok(existsSync(join(repo, `.claude/skills/${skill}/SKILL.md`)), `missing .claude skill ${skill}`);
+    }
+    assert.match(readFileSync(join(repo, ".agents/skills/review-task/SKILL.md"), "utf8"), /docs\/agents\/findings\.jsonl/);
+
+    // MCP configs across Antigravity, Claude Code, and OpenCode
+    const claudeMcp = JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8")).mcpServers;
+    assert.equal(claudeMcp["microsoft-learn"].url, "https://learn.microsoft.com/api/mcp");
+    assert.equal(claudeMcp.context7.url, "https://mcp.context7.com/mcp");
+    assert.equal(claudeMcp.nuget.command, "dnx");
+
+    const agyPlugin = JSON.parse(readFileSync(join(repo, ".agents/plugins/app-knowledge/plugin.json"), "utf8"));
+    assert.equal(agyPlugin.name, "app-knowledge");
+    const agyMcp = JSON.parse(readFileSync(join(repo, ".agents/plugins/app-knowledge/mcp_config.json"), "utf8")).mcpServers;
+    assert.equal(agyMcp["microsoft-learn"].url, "https://learn.microsoft.com/api/mcp");
+    assert.equal(agyMcp.context7.url, "https://mcp.context7.com/mcp");
+    assert.equal(agyMcp.nuget.command, "dnx");
+
+    const ocRaw = readFileSync(join(repo, "opencode.jsonc"), "utf8")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n")
+      .replace(/,(\s*[\]}])/g, "$1");
+    const ocServers = JSON.parse(ocRaw).mcp.servers;
+    assert.equal(ocServers["microsoft-learn"].type, "remote");
+    assert.equal(ocServers["microsoft-learn"].url, "https://learn.microsoft.com/api/mcp");
+    assert.equal(ocServers.context7.type, "remote");
+    assert.equal(ocServers.context7.url, "https://mcp.context7.com/mcp");
+    assert.equal(ocServers.nuget.type, "local");
+    assert.ok(Array.isArray(ocServers.nuget.command) && ocServers.nuget.command[0] === "dnx");
+    assert.equal("enabled" in ocServers.context7, false);
+
+    // Runtime MCP guard: NuGet MCP blocked for executor/reviewer, allowed for orchestrator; docs MCPs allowed everywhere
+    const ws = createTempWorkspace();
+    try {
+      assert.equal(spawnSync(process.execPath, [taskScript, "start", "0001"], { cwd: ws.mainDir, encoding: "utf8" }).status, 0);
+      assert.equal(spawnSync(process.execPath, [taskScript, "review", "0001"], { cwd: ws.mainDir, encoding: "utf8" }).status, 0);
+
+      for (const dir of [ws.taskDir, ws.reviewDir]) {
+        assert.equal(
+          runHookCli("claude", "pre-tool", { tool_name: "mcp__nuget__update_package", tool_input: { packageId: "Foo" }, cwd: dir }, dir).json
+            .hookSpecificOutput.permissionDecision,
+          "deny",
+        );
+        assert.equal(
+          runHookCli("antigravity", "pre-tool", { toolCall: { name: "mcp__nuget__search_packages", args: { query: "Kubb" } }, cwd: dir }, dir)
+            .json.decision,
+          "deny",
+        );
+        assert.equal(
+          runHookCli(
+            "claude",
+            "pre-tool",
+            { tool_name: "mcp__microsoft-learn__microsoft_docs_search", tool_input: { query: "OpenApi3_1" }, cwd: dir },
+            dir,
+          ).json.hookSpecificOutput.permissionDecision,
+          "allow",
+        );
+        assert.equal(
+          runHookCli("antigravity", "pre-tool", { toolCall: { name: "mcp__context7__query-docs", args: { query: "tanstack" } }, cwd: dir }, dir)
+            .json.decision,
+          "allow",
+        );
+      }
+
+      const mod = await import(`${pluginUrl}?v=${Date.now()}`);
+      const hooks = {};
+      await mod.default.setup({
+        directory: ws.taskDir,
+        tool: {
+          hook: (n, fn) => {
+            hooks[n] = fn;
+          },
+        },
+      });
+      await assert.rejects(() => hooks["execute.before"]({ tool: "mcp__nuget__update_package", args: {} }), /NuGet MCP/i);
+      await assert.doesNotReject(() => hooks["execute.before"]({ tool: "mcp__context7__query-docs", args: {} }));
+
+      assert.equal(
+        runHookCli("claude", "pre-tool", { tool_name: "mcp__nuget__update_package", tool_input: {}, cwd: ws.mainDir }, ws.mainDir).json
+          .hookSpecificOutput.permissionDecision,
+        "allow",
+      );
+    } finally {
+      ws.cleanup();
+    }
+  });
+});

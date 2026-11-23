@@ -50,6 +50,7 @@
     { "action": "edit", "resource": ".opencode/*", "effect": "deny" },
     { "action": "edit", "resource": "opencode.json", "effect": "deny" },
     { "action": "edit", "resource": "opencode.jsonc", "effect": "deny" },
+    { "action": "edit", "resource": ".mcp.json", "effect": "deny" },
     { "action": "edit", "resource": ".github/*", "effect": "deny" },
     { "action": "edit", "resource": "scripts/*", "effect": "deny" },
     { "action": "edit", "resource": "lefthook.yml", "effect": "deny" },
@@ -95,4 +96,20 @@
     { "action": "skill", "resource": "plan-task", "effect": "deny" },
     { "action": "skill", "resource": "review-task", "effect": "deny" },
   ],
+  "mcp": {
+    "servers": {
+      "microsoft-learn": {
+        "type": "remote",
+        "url": "https://learn.microsoft.com/api/mcp",
+      },
+      "context7": {
+        "type": "remote",
+        "url": "https://mcp.context7.com/mcp",
+      },
+      "nuget": {
+        "type": "local",
+        "command": ["dnx", "NuGet.Mcp.Server", "--source", "https://api.nuget.org/v3/index.json", "--yes"],
+      },
+    },
+  },
 }
