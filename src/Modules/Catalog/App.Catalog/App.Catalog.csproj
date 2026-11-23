@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Catalog module implementation (vertical slices, domain, and persistence).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EFCore.NamingConventions" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\App.BuildingBlocks\App.BuildingBlocks.csproj" />
+    <ProjectReference Include="..\..\..\App.SharedKernel\App.SharedKernel.csproj" />
+    <ProjectReference Include="..\App.Catalog.Contracts\App.Catalog.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

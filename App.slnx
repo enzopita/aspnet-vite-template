@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/App.Api/App.Api.csproj" />
+    <Project Path="src/App.AppHost/App.AppHost.csproj" />
+    <Project Path="src/App.BuildingBlocks/App.BuildingBlocks.csproj" />
+    <Project Path="src/App.ServiceDefaults/App.ServiceDefaults.csproj" />
+    <Project Path="src/App.SharedKernel/App.SharedKernel.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Catalog/">
+    <Project Path="src/Modules/Catalog/App.Catalog.Contracts/App.Catalog.Contracts.csproj" />
+    <Project Path="src/Modules/Catalog/App.Catalog/App.Catalog.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/App.Api.IntegrationTests/App.Api.IntegrationTests.csproj" />
+    <Project Path="tests/App.ArchitectureTests/App.ArchitectureTests.csproj" />
+  </Folder>
+</Solution>

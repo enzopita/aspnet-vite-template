@@ -1,0 +1,195 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-22 21:21-0300\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: en\n"
+
+#: src/features/catalog/components/catalog-page.tsx:69
+msgid "{totalCount} produto(s)"
+msgstr "{totalCount} product(s)"
+
+#: src/lib/api/problem.ts:19
+msgid "Algo deu errado do nosso lado. Tente novamente em instantes."
+msgstr "Something went wrong on our side. Please try again shortly."
+
+#: src/lib/api/problem.ts:20
+msgid "Algo deu errado. Tente novamente."
+msgstr "Something went wrong. Please try again."
+
+#: src/lib/api/problem.ts:14
+msgid "Alguns dados não foram aceitos. Revise e tente novamente."
+msgstr "Some input was not accepted. Review it and try again."
+
+#: src/features/catalog/components/catalog-page.tsx:98
+msgid "Anterior"
+msgstr "Previous"
+
+#: src/features/catalog/components/catalog-page.tsx:16
+msgid "Buscar por SKU ou nome..."
+msgstr "Search by SKU or name..."
+
+#: src/features/catalog/components/catalog-page.tsx:17
+msgid "Buscar produtos"
+msgstr "Search products"
+
+#: src/features/catalog/components/create-product-dialog.tsx:85
+msgid "Cadastre um item no catálogo com SKU único e estoque inicial."
+msgstr "Add an item to the catalog with a unique SKU and initial stock."
+
+#: src/features/catalog/components/create-product-dialog.tsx:128
+msgid "Cancelar"
+msgstr "Cancel"
+
+#: src/routes/__root.tsx:32
+msgid "Catálogo"
+msgstr "Catalog"
+
+#: src/features/catalog/components/catalog-page.tsx:50
+msgid "Catálogo de produtos"
+msgstr "Product catalog"
+
+#: src/lib/api/problem.ts:18
+msgid "Estes dados mudaram enquanto você editava. Recarregue e tente novamente."
+msgstr "This data changed while you were editing. Reload and try again."
+
+#: src/features/catalog/components/products-table.tsx:26
+msgid "Estoque"
+msgstr "Stock"
+
+#: src/features/catalog/components/create-product-dialog.tsx:122
+msgid "Estoque inicial"
+msgstr "Initial stock"
+
+#: src/features/catalog/api/catalog.ts:36
+msgid "Estoque insuficiente para realizar este ajuste."
+msgstr "Insufficient stock to perform this adjustment."
+
+#: src/components/ui/dialog.tsx:65
+#: src/components/ui/dialog.tsx:98
+msgid "Fechar"
+msgstr "Close"
+
+#: src/features/catalog/components/catalog-page.tsx:53
+msgid "Gerencie SKUs, preços e níveis de estoque."
+msgstr "Manage SKUs, prices, and stock levels."
+
+#: src/features/catalog/api/catalog.ts:33
+#: src/features/catalog/schemas/create-product.ts:7
+msgid "Informe o nome do produto."
+msgstr "Enter the product name."
+
+#: src/features/catalog/api/catalog.ts:32
+#: src/features/catalog/schemas/create-product.ts:5
+msgid "Informe o SKU do produto."
+msgstr "Enter the product SKU."
+
+#: src/features/catalog/api/catalog.ts:31
+msgid "Já existe um produto cadastrado com este SKU."
+msgstr "A product with this SKU already exists."
+
+#: src/lib/api/problem.ts:17
+msgid "Não encontramos o que você procurava."
+msgstr "We could not find what you were looking for."
+
+#: src/lib/api/problem.ts:13
+msgid "Não foi possível falar com o servidor. Verifique sua conexão e tente novamente."
+msgstr "Could not reach the server. Check your connection and try again."
+
+#: src/routes/__root.tsx:7
+msgid "Navegação principal"
+msgstr "Primary navigation"
+
+#: src/features/catalog/components/products-table.tsx:63
+msgid "Nenhum produto encontrado."
+msgstr "No products found."
+
+#: src/features/catalog/components/create-product-dialog.tsx:112
+msgid "Nome"
+msgstr "Name"
+
+#: src/features/catalog/components/create-product-dialog.tsx:77
+#: src/features/catalog/components/create-product-dialog.tsx:82
+msgid "Novo produto"
+msgstr "New product"
+
+#: src/features/catalog/schemas/create-product.ts:10
+msgid "O estoque inicial deve ser um número inteiro não negativo."
+msgstr "Initial stock must be a non-negative integer."
+
+#: src/features/catalog/api/catalog.ts:35
+msgid "O estoque inicial não pode ser negativo."
+msgstr "Initial stock cannot be negative."
+
+#: src/features/catalog/schemas/create-product.ts:8
+msgid "O nome deve ter no máximo 200 caracteres."
+msgstr "Name must be at most 200 characters."
+
+#: src/features/catalog/schemas/create-product.ts:9
+msgid "O preço deve ser zero ou maior."
+msgstr "Price must be zero or greater."
+
+#: src/features/catalog/api/catalog.ts:34
+msgid "O preço não pode ser negativo."
+msgstr "Price cannot be negative."
+
+#: src/features/catalog/api/catalog.ts:37
+msgid "O produto foi atualizado por outra operação. Recarregue e tente novamente."
+msgstr "The product was updated by another operation. Reload and try again."
+
+#: src/features/catalog/schemas/create-product.ts:6
+msgid "O SKU deve ter no máximo 64 caracteres."
+msgstr "SKU must be at most 64 characters."
+
+#. placeholder {0}: search.page
+#: src/features/catalog/components/catalog-page.tsx:86
+msgid "Página {0} de {displayTotalPages}"
+msgstr "Page {0} of {displayTotalPages}"
+
+#: src/features/catalog/components/create-product-dialog.tsx:118
+#: src/features/catalog/components/products-table.tsx:22
+msgid "Preço"
+msgstr "Price"
+
+#: src/features/catalog/components/products-table.tsx:18
+msgid "Produto"
+msgstr "Product"
+
+#: src/features/catalog/components/create-product-dialog.tsx:26
+msgid "Produto cadastrado com sucesso."
+msgstr "Product created successfully."
+
+#: src/features/catalog/api/catalog.ts:38
+msgid "Produto não encontrado."
+msgstr "Product not found."
+
+#: src/features/catalog/components/catalog-page.tsx:107
+msgid "Próxima"
+msgstr "Next"
+
+#: src/features/catalog/components/create-product-dialog.tsx:131
+msgid "Salvando..."
+msgstr "Saving..."
+
+#: src/features/catalog/components/create-product-dialog.tsx:131
+msgid "Salvar"
+msgstr "Save"
+
+#: src/features/catalog/components/create-product-dialog.tsx:107
+#: src/features/catalog/components/products-table.tsx:14
+msgid "SKU"
+msgstr "SKU"
+
+#: src/lib/api/problem.ts:15
+msgid "Sua sessão terminou. Entre novamente para continuar."
+msgstr "Your session has expired. Sign in again to continue."
+
+#: src/features/catalog/components/create-product-dialog.tsx:27
+msgid "Teclado mecânico"
+msgstr "Mechanical keyboard"
+
+#: src/lib/api/problem.ts:16
+msgid "Você não tem permissão para fazer isso."
+msgstr "You do not have permission to do this."

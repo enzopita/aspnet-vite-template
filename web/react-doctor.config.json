@@ -1,0 +1,11 @@
+{
+  "ignore": {
+    "files": ["src/lib/api/gen/**", "src/app/route-tree.gen.ts"],
+    "overrides": [
+      {
+        "files": ["src/components/ui/**"],
+        "rules": ["react-doctor/only-export-components"]
+      }
+    ]
+  }
+}

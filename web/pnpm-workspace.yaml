@@ -1,0 +1,15 @@
+minimumReleaseAgeExclude:
+  - "@oxlint-tsgolint/darwin-arm64@7.0.2008"
+  - "@oxlint-tsgolint/darwin-x64@7.0.2008"
+  - "@oxlint-tsgolint/linux-arm64@7.0.2008"
+  - "@oxlint-tsgolint/linux-x64@7.0.2008"
+  - "@oxlint-tsgolint/win32-arm64@7.0.2008"
+  - "@oxlint-tsgolint/win32-x64@7.0.2008"
+  - oxlint-tsgolint@7.0.2008
+
+# Dependency build scripts are denied unless listed here. lefthook: our `prepare` script installs the hooks.
+allowBuilds:
+  lefthook: false
+
+# Run package.json scripts with a POSIX-like shell on every OS (e.g. `VAR=1 cmd` works on Windows).
+shellEmulator: true
