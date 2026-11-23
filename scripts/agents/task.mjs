@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Task tooling for planner → executor → reviewer work (ADR 0008). Usage: node scripts/agents/task.mjs help
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runVerify } from "../verify.mjs";
 import {
   ALWAYS_ALLOWED,
   BRANCH_PREFIX,
@@ -185,40 +185,6 @@ export function fingerprint(root, base) {
   return sha256(entries.join("\n"));
 }
 
-/** Race tests pass by luck often enough that one green run proves little; verify repeats each changed class. */
-export const CONCURRENCY_RUNS = 10;
-const CONCURRENCY_TEST = /^tests\/([^/]+)\/(?:.+\/)?(\w+ConcurrencyTests)\.cs$/;
-
-export function gatesFor(files, task) {
-  const paths = files.flatMap((f) => [f.path, f.from].filter(Boolean));
-  const dotnet = paths.some((p) => /\.(cs|csproj|props|slnx)$/.test(p) || /^(src|tests)\//.test(p));
-  const web = paths.some((p) => p.startsWith("web/"));
-  const routes = paths.some((p) => p.startsWith("web/src/routes/"));
-  const gates = [];
-  if (dotnet) gates.push("dotnet build App.slnx --nologo -v quiet");
-  if (dotnet && existsSync("web/node_modules")) gates.push("pnpm --dir web run --silent api:generate");
-  if (routes) gates.push("pnpm --dir web run --silent build");
-  if (web || dotnet) {
-    gates.push("pnpm --dir web run --silent check");
-    gates.push("pnpm --dir web run --silent test");
-  }
-  if (web) gates.push("pnpm --dir web run --silent i18n:extract", "node scripts/check-i18n.mjs");
-  // Same command as the pre-push hook, so an executor sees React Doctor warnings before it commits, not after.
-  const ui = paths.some((p) => p.startsWith("web/src/") && p.endsWith(".tsx"));
-  if (ui) gates.push("pnpm --dir web exec react-doctor . --yes --no-score --blocking warning");
-  if (dotnet) {
-    gates.push("dotnet format App.slnx --verify-no-changes --no-restore");
-    gates.push("dotnet test --project tests/App.ArchitectureTests --no-build");
-  }
-  const races = files
-    .filter((f) => f.status !== "D")
-    .map((f) => CONCURRENCY_TEST.exec(f.path))
-    .filter(Boolean)
-    .map(([, project, cls]) => `dotnet test --project tests/${project} --no-build -- --filter-class "*.${cls}"`);
-  const repeated = races.flatMap((cmd) => Array.from({ length: CONCURRENCY_RUNS }, () => cmd));
-  return [...gates, ...list(task.meta.verify), ...repeated];
-}
-
 function verify(root, opts) {
   process.chdir(root);
   const result = check(root, { ...opts, mode: "worktree" });
@@ -233,26 +199,18 @@ function verify(root, opts) {
   if (result.errors.length) console.log("⚠ APP_TASK_FENCE=off: fence violations ignored, running the gates anyway");
 
   const task = readTask(root, result.task.file);
-  const gates = gatesFor(result.files, task);
-  const ran = [];
-  for (const cmd of gates) {
-    console.log(`\n▶ ${cmd}`);
-    const started = Date.now();
-    const r = spawnSync(cmd, { shell: true, stdio: "inherit", cwd: root });
-    const ok = r.status === 0;
-    ran.push({ cmd, ok, seconds: Math.round((Date.now() - started) / 1000) });
-    if (!ok) {
-      console.error(`\n✖ verify failed at: ${cmd}\n  Fix the cause (never weaken the gate) and run verify again.`);
-      writeState(root, `verify-${result.task.id}.json`, { ok: false, at: new Date().toISOString(), ran });
-      return 1;
-    }
+  const res = runVerify(root, { mode: "task", files: result.files, task });
+  if (!res.ok) {
+    console.error(`\n✖ verify failed at: ${res.failedCmd}\n  Fix the cause (never weaken the gate) and run verify again.`);
+    writeState(root, `verify-${result.task.id}.json`, { ok: false, at: new Date().toISOString(), ran: res.ran });
+    return 1;
   }
 
   // Gates may regenerate files (API client, catalogs): re-run the fence on the final tree before recording success.
   const after = check(root, { ...opts, mode: "worktree" });
   if (reviewer) {
     console.log(`
-✔ task ${result.task.id}: all ${gates.length} gate(s) passed (fence bypassed, nothing recorded).`);
+✔ task ${result.task.id}: all ${res.gates.length} gate(s) passed (fence bypassed, nothing recorded).`);
     return 0;
   }
   if (after.errors.length) {
@@ -260,8 +218,8 @@ function verify(root, opts) {
     return 1;
   }
   const fp = fingerprint(root, after.base);
-  writeState(root, `verify-${result.task.id}.json`, { ok: true, at: new Date().toISOString(), fingerprint: fp, ran });
-  console.log(`\n✔ task ${result.task.id}: all ${gates.length} gate(s) passed. Commit, then set status: review.`);
+  writeState(root, `verify-${result.task.id}.json`, { ok: true, at: new Date().toISOString(), fingerprint: fp, ran: res.ran });
+  console.log(`\n✔ task ${result.task.id}: all ${res.gates.length} gate(s) passed. Commit, then set status: review.`);
   return 0;
 }
 

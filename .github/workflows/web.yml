@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          fetch-depth: 0
 
       - name: Detect relevant changes
         id: changes
@@ -67,20 +67,6 @@ jobs:
       - if: steps.changes.outputs.run == 'true'
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Generated artifacts are up to date
-        if: steps.changes.outputs.run == 'true'
-        run: |
-          pnpm run api:generate
-          pnpm exec vite build
-          node ../scripts/check-generated.mjs
-
-      - if: steps.changes.outputs.run == 'true'
-        run: pnpm run typecheck
-      - if: steps.changes.outputs.run == 'true'
-        run: pnpm run lint
-      - if: steps.changes.outputs.run == 'true'
-        run: pnpm run fmt:check
-
       # Component tests run in headless Chromium (Vitest browser mode, ADR 0005); the download is cached per
       # Playwright version.
       - name: Playwright version
@@ -94,19 +80,8 @@ jobs:
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - if: steps.changes.outputs.run == 'true'
         run: pnpm exec playwright install --with-deps --only-shell chromium
-      - if: steps.changes.outputs.run == 'true'
-        run: pnpm run test
 
-      - name: Agent and script tooling tests
+      - name: Verify (web)
         if: steps.changes.outputs.run == 'true'
-        run: node --test ../scripts/
-
-      - name: i18n catalogs are complete
-        if: steps.changes.outputs.run == 'true'
-        run: |
-          pnpm run i18n:extract
-          node ../scripts/check-i18n.mjs
-
-      - name: React Doctor
-        if: steps.changes.outputs.run == 'true'
-        run: pnpm exec react-doctor . --yes --no-score --blocking warning
+        working-directory: .
+        run: node scripts/verify.mjs --mode ci --area web
