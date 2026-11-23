@@ -798,6 +798,31 @@ public void Must_pass() { Assert.True(true); }
         "allow",
       );
 
+      // Deleting agent-role on task/* or review/* fails closed to executor/reviewer rather than orchestrator.
+      const taskGitDir = execFileSync("git", ["rev-parse", "--git-dir"], { cwd: ws.taskDir, encoding: "utf8" }).trim();
+      const reviewGitDir = execFileSync("git", ["rev-parse", "--git-dir"], { cwd: ws.reviewDir, encoding: "utf8" }).trim();
+      rmSync(resolve(ws.taskDir, taskGitDir, "agent-role"), { force: true });
+      rmSync(resolve(ws.reviewDir, reviewGitDir, "agent-role"), { force: true });
+      assert.equal(readRole(ws.taskDir), "executor");
+      assert.equal(readRole(ws.reviewDir), "reviewer");
+      assert.equal(readRole(ws.mainDir), "orchestrator");
+
+      // Global git flags (`-C`, `-c`) cannot evade push/checkout rules.
+      assert.equal(
+        runHookCli("claude", "pre-tool", { tool_name: "Bash", tool_input: { command: "git -C ../other checkout main" }, cwd: ws.taskDir }, ws.taskDir)
+          .json.hookSpecificOutput.permissionDecision,
+        "deny",
+      );
+      assert.equal(
+        runHookCli(
+          "claude",
+          "pre-tool",
+          { tool_name: "Bash", tool_input: { command: 'git -C "C:\\temp\\repo" -c core.hooksPath=/dev/null push origin HEAD' }, cwd: ws.taskDir },
+          ws.taskDir,
+        ).json.hookSpecificOutput.permissionDecision,
+        "deny",
+      );
+
       assert.equal(
         runHookCli("claude", "pre-tool", { tool_name: "mcp__nuget__update_package", tool_input: {}, cwd: ws.mainDir }, ws.mainDir).json
           .hookSpecificOutput.permissionDecision,

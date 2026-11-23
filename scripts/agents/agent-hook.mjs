@@ -48,13 +48,15 @@ const deny = (reason, cmd) => ({
   reason: `App guard: ${reason}${cmd ? `\n  command: ${cmd.slice(0, 200)}` : ""}`,
 });
 
+const GIT_CMD = String.raw`\bgit(?:\s+(?:-[cC]\s+(?:"[^"]+"|'[^']+'|\S+)|--git-dir(?:=|\s+)(?:"[^"]+"|'[^']+'|\S+)|--work-tree(?:=|\s+)(?:"[^"]+"|'[^']+'|\S+)|--no-pager))*\s+`;
+
 /** @type {[RegExp, string][]} */
 const EXECUTOR_DENY_COMMANDS = [
-  [/--no-verify\b|\bgit\b[^|;&]*\bcommit\b[^|;&]*\s-[a-zA-Z]*n[a-zA-Z]*\b/, "skipping git hooks is not allowed — fix what the hook reports"],
+  [new RegExp(String.raw`--no-verify\b|${GIT_CMD}[^|;&]*\bcommit\b[^|;&]*\s-[a-zA-Z]*n[a-zA-Z]*\b`), "skipping git hooks is not allowed — fix what the hook reports"],
   [/\bLEFTHOOK(_EXCLUDE|_SKIP)?\s*=|\blefthook\s+(uninstall|install)\b|core\.hooksPath/i, "changing or disabling git hooks is not allowed"],
-  [/\bgit\s+push\b/, "executors never push — the reviewer integrates the branch"],
-  [/\bgit\s+(reset\s+--hard|clean\s+-\w*f|rebase|filter-branch|filter-repo|update-ref|tag|merge)\b/, "history-rewriting / integration git commands are the reviewer's job"],
-  [/\bgit\s+(branch\s+-[dDmM]|stash\s+(drop|clear)|checkout\s+(main|master)\b|switch\s+(main|master)\b)/, "stay on the task branch and keep its history"],
+  [new RegExp(`${GIT_CMD}push\\b`), "executors never push — the reviewer integrates the branch"],
+  [new RegExp(`${GIT_CMD}(?:reset\\s+--hard|clean\\s+-\\w*f|rebase|filter-branch|filter-repo|update-ref|tag|merge)\\b`), "history-rewriting / integration git commands are the reviewer's job"],
+  [new RegExp(`${GIT_CMD}(?:branch\\s+-[dDmM]|stash\\s+(?:drop|clear)|checkout\\s+(?:main|master)\\b|switch\\s+(?:main|master)\\b)`), "stay on the task branch and keep its history"],
   [/\b(pnpm|npm|npx|yarn|bun)\b(\s+(--?[\w-]+(=\S+)?|(--dir|-C|--filter|--prefix)\s+\S+))*\s+(add|remove|rm|uninstall|update|up|upgrade|dlx\s+shadcn|i\s+[^-\s]|install\s+[^-\s])/, "adding/removing/updating packages needs the planner (task `unlock`)"],
   [/\bdotnet\s+(add\s+\S+\s+package|add\s+package|remove\s+\S+\s+package|package\s+(add|remove|update))\b|\bdotnet\s+outdated\b/, "adding/removing NuGet packages needs the planner (task `unlock`)"],
   [/\bdotnet\s+ef\s+migrations\s+remove\b/, "migrations are append-only — add a new one instead"],
@@ -63,7 +65,7 @@ const EXECUTOR_DENY_COMMANDS = [
 
 /** @type {[RegExp, string][]} */
 const REVIEWER_DENY_COMMANDS = [
-  [/--no-verify\b|\bgit\b[^|;&]*\bcommit\b[^|;&]*\s-[a-zA-Z]*n[a-zA-Z]*\b/, "skipping git hooks is not allowed — fix what the hook reports"],
+  [new RegExp(String.raw`--no-verify\b|${GIT_CMD}[^|;&]*\bcommit\b[^|;&]*\s-[a-zA-Z]*n[a-zA-Z]*\b`), "skipping git hooks is not allowed — fix what the hook reports"],
   [/\bLEFTHOOK(_EXCLUDE|_SKIP)?\s*=|\blefthook\s+(uninstall|install)\b|core\.hooksPath/i, "changing or disabling git hooks is not allowed"],
   [/\bdotnet\s+ef\s+migrations\s+remove\b/, "migrations are append-only"],
   [/\bagent-role\b|\.git[\\/]+(?:worktrees|app-agents)/i, "modifying worktree role or verify state files is not allowed"],

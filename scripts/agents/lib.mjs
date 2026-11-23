@@ -130,10 +130,14 @@ export function writeRole(cwd, role) {
 export function readRole(cwd) {
   try {
     const raw = readFileSync(roleFile(cwd), "utf8").trim();
-    return ROLES.includes(raw) ? raw : "orchestrator";
+    if (ROLES.includes(raw)) return raw;
   } catch {
-    return "orchestrator";
+    // Fall through to branch-based fallback below.
   }
+  const branch = currentBranch(cwd);
+  if (branch.startsWith(BRANCH_PREFIX)) return "executor";
+  if (branch.startsWith(REVIEW_BRANCH_PREFIX)) return "reviewer";
+  return "orchestrator";
 }
 
 // ---------------------------------------------------------------------------------------------------------------
