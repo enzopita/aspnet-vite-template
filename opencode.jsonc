@@ -1,17 +1,16 @@
 // OpenCode project config for executor agents (ADR 0008). AGENTS.md is loaded automatically; the protocol lives in
-// .agents/skills/execute-task. These rules stop a tool call early; the git hooks (task.mjs check) enforce the same
-// fence on commit for every harness. The `edit` list mirrors PROTECTED + GENERATED in scripts/agents/lib.mjs
-// (a test keeps them in sync). Protected paths a task unlocks still need a human here, by design.
+// .agents/skills/execute-task. The `.opencode/plugins/app-guard.mjs` plugin (V2 API) enforces role-aware worktree
+// guards; static `permissions` below serve as a second defense layer mirroring PROTECTED + GENERATED in
+// scripts/agents/lib.mjs (kept in sync by agents.test.mjs).
 {
   "$schema": "https://opencode.ai/config.json",
   "permissions": [
-    // Hooks, gates and history belong to humans and the reviewer.
+    // Hooks, gates and history belong to humans and the orchestrator.
     { "action": "shell", "resource": "*--no-verify*", "effect": "deny" },
     { "action": "shell", "resource": "*LEFTHOOK*", "effect": "deny" },
     { "action": "shell", "resource": "*lefthook install*", "effect": "deny" },
     { "action": "shell", "resource": "*lefthook uninstall*", "effect": "deny" },
     { "action": "shell", "resource": "*core.hooksPath*", "effect": "deny" },
-    { "action": "shell", "resource": "*APP_TASK_FENCE*", "effect": "deny" },
     { "action": "shell", "resource": "git push *", "effect": "deny" },
     { "action": "shell", "resource": "git reset --hard*", "effect": "deny" },
     { "action": "shell", "resource": "git clean *", "effect": "deny" },

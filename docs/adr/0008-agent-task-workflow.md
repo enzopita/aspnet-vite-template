@@ -12,30 +12,42 @@ format.
 
 ## Decision
 
-Split the roles and enforce the boundaries with machines. Any model can hold any role.
+Split the roles by **worktree location** and enforce the boundaries with machines. Any model or harness can hold any
+role.
 
-- **Planner** (the orchestrator, or a human; skill `plan-task`): writes a task spec in `docs/tasks/` and commits it
-  on `main`. The spec fixes the names, maps every new file to a reference file, and lists the paths the task may
-  change (`allow`), the protected paths it may open (`unlock`) and the commands that prove it (`verify`).
-- **Executor** (skill `execute-task`): implements one spec on `task/NNNN-<slug>`. Owns the code, the commits, the
-  `status` field (`in-progress`, `review`, `blocked`) and the Executor log. Leaves pushing, merging and history to
-  the reviewer.
-- **Reviewer** (the orchestrator, or a human; skill `review-task`): checks the branch against the spec, polishes,
-  sends back as `changes-requested` or merges. Each class of finding a machine could catch becomes a new guard.
+- **Orchestrator** (main checkout on `main` or orchestrator setup branches; skills `plan-task` / governance): plans,
+  commits specs on `main`, creates task and review worktrees, edits governance, and merges PRs. Runs without executor
+  hook restrictions.
+- **Executor** (`../<repo>-task-NNNN` on `task/NNNN-<slug>`, created by `task.mjs start NNNN`; skill `execute-task`):
+  implements one spec. Owns the code inside `allow`, the commits, the `status` field (`in-progress`, `review`, `blocked`)
+  and `## Executor log`. Leaves pushing, merging and history rewrites out.
+- **Reviewer** (`../<repo>-review-NNNN` on `review/NNNN-<slug>`, created by `task.mjs review NNNN` from the task
+  branch head; skill `review-task`): checks the branch against the spec, polishes strictly within `allow` (plus
+  `## Review` and `status`), sends back as `changes-requested` or sets `done` for merge into `main`. Changes outside
+  `allow` belong to a new task or to `main` after merge — never to an ad-hoc fence bypass.
 
-Enforcement lives in the repository, so it holds in any harness:
+Enforcement lives in the repository, so it holds across harnesses:
 
-- `scripts/agents/task.mjs check` is the **fence**: changed paths inside `allow`; protected files untouched;
-  generated files only regenerated; existing migrations append-only; the spec unchanged apart from `status` and
-  the Executor log. Lefthook runs it on every commit of a `task/*` branch.
-- `scripts/agents/task.mjs verify` runs the fence, the gates for the touched areas and the task's own commands, and
-  records a fingerprint of the tree that passed.
-- Harness adapters only fail earlier: `.agents/hooks.json` → `scripts/agents/antigravity-hook.mjs` (SessionStart,
-  PreToolUse, Stop) and `opencode.jsonc` permissions, kept in sync with `PROTECTED` by a test.
+- **Role marker by location:** `task.mjs start` and `task.mjs review` write `agent-role` (`executor` or `reviewer`) inside
+  the worktree's git dir (`.git/worktrees/<name>/agent-role`). Missing markers (such as the main checkout) resolve to
+  `orchestrator`.
+- **Single-rule fence (`scripts/agents/task.mjs check`):** changed paths inside `allow`; protected files untouched unless
+  explicitly listed under `unlock`; generated files only regenerated; existing migrations append-only; the spec unchanged
+  apart from `status`, `## Executor log` (and `## Review` on `review/*` branches). Lefthook runs it on every commit and
+  `.github/workflows/fence.yml` re-checks it on `pull_request_target` using scripts checked out from `main`. No bypass
+  variable exists.
+- **Verified delivery (`scripts/agents/task.mjs verify` → `scripts/verify.mjs --mode task`):** runs the fence, the gates
+  for the touched areas, and the task's own commands, recording a fingerprint of the verified tree.
+- **Unified harness adapters (`scripts/agents/agent-hook.mjs`):** role-aware SessionStart, PreToolUse, PostToolUse and Stop
+  hooks wired into Claude Code (`.claude/settings.json`), Antigravity (`.agents/hooks.json`) and OpenCode V2 plugins
+  (`.opencode/plugins/app-guard.mjs`, backed by `opencode.jsonc`). Fail closed on invalid write/command/MCP events.
 
 ## Consequences
 
-- Planning costs more: specs must be precise, and first-of-a-kind patterns are built by the planner before any
+- Planning costs more: specs must be precise, and first-of-a-kind patterns are built by the orchestrator before any
   executor copies them. Executor output becomes predictable and cheap to review.
-- Executors change rules, gates and dependencies only through a spec with `unlock`.
-- When a harness adapter breaks, the git-level fence still holds.
+- Executors and reviewers never touch `PROTECTED`, `.git/**`, `GENERATED` or paths outside their worktree unless a task
+  explicitly unlocks a protected manifest.
+- Role guards are session guardrails for cooperative agents rather than OS-level user isolation (known boundary when an
+  agent runs as the same OS user): the commit fence, reviewer re-verification and trusted CI still reject unapproved
+  changes.

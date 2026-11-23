@@ -7,13 +7,17 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 export const TASKS_DIR = "docs/tasks";
 export const MAIN_BRANCH = "main";
 export const BRANCH_PREFIX = "task/";
+export const REVIEW_BRANCH_PREFIX = "review/";
+export const ROLES = ["orchestrator", "executor", "reviewer"];
 export const STATUSES = ["ready", "in-progress", "review", "changes-requested", "blocked", "done"];
 /** Statuses an executor may set. `ready`, `changes-requested` and `done` belong to the planner/reviewer. */
 export const EXECUTOR_STATUSES = ["in-progress", "review", "blocked"];
+/** Statuses a reviewer may set on `review/NNNN-*` while polishing within the task's `allow` paths. */
+export const REVIEWER_STATUSES = ["in-progress", "review", "blocked", "changes-requested", "done"];
 
 /**
- * Files no executor agent may change unless the task lists them under `unlock:`. They hold the rules, the gates and
- * the dependency graph — the things a model "fixes" when it can't make the real change pass.
+ * Files no executor or reviewer agent may change unless the task lists them under `unlock:`. They hold the rules,
+ * the gates and the dependency graph — the things a model "fixes" when it can't make the real change pass.
  */
 export const PROTECTED = [
   "AGENTS.md",
@@ -75,7 +79,7 @@ export const MIGRATIONS = "src/Modules/**/Persistence/Migrations/**";
 export const MIGRATION_SNAPSHOT = "src/Modules/**/Persistence/Migrations/*ModelSnapshot.cs";
 
 // ---------------------------------------------------------------------------------------------------------------
-// git
+// git & roles
 
 export function git(args, opts = {}) {
   return execFileSync("git", args, {
@@ -104,6 +108,31 @@ export function currentBranch(cwd) {
 
 export function gitDir(cwd) {
   return resolve(cwd, git(["rev-parse", "--git-common-dir"], { cwd }));
+}
+
+export function worktreeGitDir(cwd) {
+  return resolve(cwd, git(["rev-parse", "--git-dir"], { cwd }));
+}
+
+export function roleFile(cwd) {
+  return join(worktreeGitDir(cwd), "agent-role");
+}
+
+export function writeRole(cwd, role) {
+  if (!ROLES.includes(role)) throw new Error(`unknown agent role: ${role}`);
+  const file = roleFile(cwd);
+  mkdirSync(resolve(file, ".."), { recursive: true });
+  writeFileSync(file, `${role}\n`);
+  return file;
+}
+
+export function readRole(cwd) {
+  try {
+    const raw = readFileSync(roleFile(cwd), "utf8").trim();
+    return ROLES.includes(raw) ? raw : "orchestrator";
+  } catch {
+    return "orchestrator";
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -199,24 +228,38 @@ export function findTaskFile(root, id) {
   return taskFiles(root).find((f) => f.startsWith(`${TASKS_DIR}/${padded}-`));
 }
 
-/** `task/0007-some-slug` → `0007`. */
+/** `task/0007-some-slug` or `review/0007-some-slug` → `0007`. */
 export function taskIdFromBranch(branch) {
-  return /^task\/(\d{4})(?:-|$)/.exec(branch ?? "")?.[1];
+  return /^(?:task|review)\/(\d{4})(?:-|$)/.exec(branch ?? "")?.[1];
+}
+
+export function isReviewBranch(branch) {
+  return /^review\/(\d{4})(?:-|$)/.test(branch ?? "");
 }
 
 export function readTask(root, file) {
   return { file, ...parseTask(readFileSync(join(root, file), "utf8")) };
 }
 
-/** The part of the body the executor must not change: everything except the "Executor log" section. */
-export function frozenBody(body) {
-  const normalized = body.replace(/\r\n/g, "\n").replace(/^(\s*[-*]\s+)\[[xX]\]/gm, "$1[ ]");
-  const start = normalized.search(/^## Executor log\s*$/m);
-  if (start < 0) return normalized.trimEnd();
-  const rest = normalized.slice(start);
+function stripSection(markdown, heading) {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const start = markdown.search(new RegExp(`^## ${escaped}\\s*$`, "m"));
+  if (start < 0) return markdown;
+  const rest = markdown.slice(start);
   const next = rest.slice(1).search(/^## /m);
   const after = next < 0 ? "" : rest.slice(next + 1);
-  return `${normalized.slice(0, start)}${after}`.trimEnd();
+  return `${markdown.slice(0, start)}${after}`;
+}
+
+/**
+ * The part of the spec body frozen during work: everything except "## Executor log" (and "## Review" when polishing on
+ * a `review/*` branch). Ticked checkboxes do not count as spec changes.
+ */
+export function frozenBody(body, { allowReview = false } = {}) {
+  let normalized = body.replace(/\r\n/g, "\n").replace(/^(\s*[-*]\s+)\[[xX]\]/gm, "$1[ ]");
+  normalized = stripSection(normalized, "Executor log");
+  if (allowReview) normalized = stripSection(normalized, "Review");
+  return normalized.trimEnd();
 }
 
 // ---------------------------------------------------------------------------------------------------------------

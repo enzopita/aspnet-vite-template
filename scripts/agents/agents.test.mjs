@@ -1,14 +1,89 @@
-// Tests for the agent task tooling (ADR 0008). Run: node --test scripts/agents/
+// Tests for agent task tooling, worktree roles, unified hooks, and adapters (ADR 0008). Run: node --test scripts/agents/
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, test } from "node:test";
-import { GENERATED, PROTECTED, frozenBody, globToRegExp, parseTask } from "./lib.mjs";
+import { GENERATED, PROTECTED, frozenBody, globToRegExp, parseTask, readRole, writeState, sha256 } from "./lib.mjs";
 import { PATTERNS, check } from "./task.mjs";
 
 const repo = resolve(import.meta.dirname, "..", "..");
+const hookScript = join(repo, "scripts", "agents", "agent-hook.mjs");
+const taskScript = join(repo, "scripts", "agents", "task.mjs");
+const pluginUrl = pathToFileURL(join(repo, ".opencode", "plugins", "app-guard.mjs")).href;
+
+function runHookCli(harness, event, payload, cwd) {
+  const input = typeof payload === "string" ? payload : JSON.stringify(payload);
+  const r = spawnSync(process.execPath, [hookScript, harness, event], {
+    input,
+    cwd,
+    encoding: "utf8",
+  });
+  return { status: r.status, json: JSON.parse(r.stdout || "{}"), stderr: r.stderr };
+}
+
+function createTempWorkspace() {
+  const parent = mkdtempSync(join(tmpdir(), "app-roles-"));
+  const mainDir = join(parent, "app-repo");
+  mkdirSync(mainDir, { recursive: true });
+  const git = (...args) => execFileSync("git", args, { cwd: mainDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const put = (relPath, content) => {
+    const full = join(mainDir, relPath);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  };
+
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "test");
+  git("config", "core.hooksPath", "/dev/null");
+
+  const spec = `---
+id: "0001"
+title: Example task
+status: ready
+scope: orders
+allow:
+  - src/Modules/Orders/**
+  - web/src/features/orders/**
+unlock: []
+verify: []
+---
+# 0001 · Example task
+
+## Acceptance criteria
+
+- [ ] it works
+
+## Executor log
+
+## Review
+`;
+  put("docs/tasks/0001-example.md", spec);
+  put("lefthook.yml", "min_version: 2.2.0\n");
+  put("src/AGENTS.md", "# Backend Area Rules\nUse TimeProvider.\n");
+  put("web/AGENTS.md", "# Frontend Area Rules\nUse Lingui Trans.\n");
+  put("web/.oxlintrc.json", `${JSON.stringify({ rules: { "no-debugger": "error" } })}\n`);
+  put("src/Modules/Orders/App.Orders/Persistence/Migrations/1_Init.cs", "// init\n");
+  put(".github/workflows/fence.yml", "name: fence\n");
+  git("add", "-A");
+  git("commit", "-qm", "init");
+
+  return {
+    parent,
+    mainDir,
+    taskDir: join(parent, `${basename(mainDir)}-task-0001`),
+    reviewDir: join(parent, `${basename(mainDir)}-review-0001`),
+    cleanup: () => {
+      try {
+        execFileSync("git", ["worktree", "prune"], { cwd: mainDir, stdio: "ignore" });
+      } catch {}
+      rmSync(parent, { recursive: true, force: true });
+    },
+  };
+}
 
 describe("globs", () => {
   const cases = [
@@ -49,71 +124,289 @@ unlock: []
     assert.deepEqual(meta.allow, ["src/**", "web/src/features/x/**"]);
     assert.deepEqual(meta.unlock, []);
   });
-  test("frozen body ignores the executor log and ticked boxes", () => {
+
+  test("frozen body ignores executor log and optionally review section", () => {
     const { body } = parseTask(text);
     const edited = body.replace("- [ ] criterion", "- [x] criterion").replace("(empty)", "did things\n\nmore");
     assert.equal(frozenBody(edited), frozenBody(body));
     assert.notEqual(frozenBody(body.replace("criterion", "other")), frozenBody(body));
     assert.notEqual(frozenBody(body.replace("## Review\n", "## Review\napproved\n")), frozenBody(body));
+    assert.equal(frozenBody(body.replace("## Review\n", "## Review\napproved\n"), { allowReview: true }), frozenBody(body, { allowReview: true }));
   });
 });
 
-describe("antigravity guard", () => {
-  const run = (event, payload) => {
-    const r = spawnSync(process.execPath, [join(import.meta.dirname, "antigravity-hook.mjs"), event], {
-      input: JSON.stringify(payload),
-      encoding: "utf8",
+describe("worktrees, roles, and review branches", () => {
+  let ws;
+
+  before(() => {
+    ws = createTempWorkspace();
+  });
+  after(() => ws.cleanup());
+
+  test("task.mjs start and review create sibling worktrees with agent-role and single-rule fence", () => {
+    assert.equal(readRole(ws.mainDir), "orchestrator");
+
+    const start = spawnSync(process.execPath, [taskScript, "start", "0001"], { cwd: ws.mainDir, encoding: "utf8" });
+    assert.equal(start.status, 0, start.stderr);
+    assert.ok(existsSync(ws.taskDir));
+    assert.equal(readRole(ws.taskDir), "executor");
+
+    const allowedFile = join(ws.taskDir, "src", "Modules", "Orders", "App.Orders", "Domain", "Order.cs");
+    mkdirSync(dirname(allowedFile), { recursive: true });
+    writeFileSync(allowedFile, "namespace App.Orders;\n");
+    execFileSync("git", ["add", "-A"], { cwd: ws.taskDir });
+    execFileSync("git", ["commit", "-qm", "feat(orders): add entity"], { cwd: ws.taskDir });
+
+    const review = spawnSync(process.execPath, [taskScript, "review", "0001"], { cwd: ws.mainDir, encoding: "utf8" });
+    assert.equal(review.status, 0, review.stderr);
+    assert.ok(existsSync(ws.reviewDir));
+    assert.equal(readRole(ws.reviewDir), "reviewer");
+
+    // Reviewer can write ## Review and transition status to done within allow.
+    const specPath = join(ws.reviewDir, "docs", "tasks", "0001-example.md");
+    const specDone = readFileSync(specPath, "utf8")
+      .replace("status: in-progress", "status: done")
+      .replace("## Review\n", "## Review\n\nLooks solid.\n");
+    writeFileSync(specPath, specDone);
+    const reviewClean = check(ws.reviewDir, { mode: "worktree" });
+    assert.deepEqual(reviewClean.errors, []);
+
+    // Reviewer is STILL bound by `allow`: edits outside `allow` or to PROTECTED fail the fence.
+    writeFileSync(join(ws.reviewDir, "lefthook.yml"), "tampered: true\n");
+    const reviewViol = check(ws.reviewDir, { mode: "worktree" });
+    assert.match(reviewViol.errors.join("\n"), /lefthook\.yml: protected file/);
+  });
+});
+
+describe("same harness, same model: orchestrator free vs executor blocked", () => {
+  let ws;
+  /** @type {Awaited<ReturnType<any>>} */
+  let opencodeToolHook;
+  let opencodeShellHook;
+
+  before(async () => {
+    ws = createTempWorkspace();
+    const s = spawnSync(process.execPath, [taskScript, "start", "0001"], { cwd: ws.mainDir, encoding: "utf8" });
+    assert.equal(s.status, 0, s.stderr);
+
+    const mod = await import(pluginUrl);
+    const mockPlugin = mod.default;
+    assert.equal(mockPlugin.id, "app-guard");
+    await mockPlugin.setup({
+      directory: ws.taskDir,
+      tool: {
+        async hook(event, fn) {
+          if (event === "execute.before") opencodeToolHook = fn;
+        },
+      },
+      shell: {
+        async hook(event, fn) {
+          if (event === "create.before") opencodeShellHook = fn;
+        },
+      },
     });
-    return JSON.parse(r.stdout || "{}");
-  };
-  const cmd = (CommandLine) => run("pre-tool", { toolCall: { name: "run_command", args: { CommandLine } } }).decision;
-  const write = (name, args) => run("pre-tool", { toolCall: { name, args } }).decision;
-
-  const denied = [
-    "git commit --no-verify -m x",
-    "git commit -nm x",
-    "LEFTHOOK=0 git commit -m x",
-    "git config core.hooksPath /dev/null",
-    "git push origin task/0001-x",
-    "git reset --hard HEAD~1",
-    "pnpm --dir web add lodash",
-    "pnpm add -D vitest",
-    "npm install left-pad",
-    "dotnet add src/App.Api package Foo",
-    "echo hi > AGENTS.md",
-    "sed -i s/a/b/ lefthook.yml",
-    "Remove-Item web/src/lib/api/gen/index.ts",
-    "APP_TASK_FENCE=off git commit -m x",
-  ];
-  const allowed = [
-    "node scripts/agents/task.mjs check 2>&1",
-    'git commit -m "feat(orders): place an order"',
-    "pnpm --dir web install",
-    "pnpm --dir web run check",
-    "dotnet test --project tests/App.ArchitectureTests",
-    "cat AGENTS.md",
-    "git diff main -- lefthook.yml > /tmp/x.diff",
-  ];
-  for (const c of denied) test(`denies: ${c}`, () => assert.equal(cmd(c), "deny"));
-  for (const c of allowed) test(`allows: ${c}`, () => assert.equal(cmd(c), "allow"));
-
-  test("denies editing a protected file by absolute path", () =>
-    assert.equal(write("code_action", { TargetFile: join(repo, "lefthook.yml"), CodeContent: "x" }), "deny"));
-  test("denies hand-editing generated code", () =>
-    assert.equal(write("file_change", { TargetFile: join(repo, "web", "src", "lib", "api", "gen", "index.ts") }), "deny"));
-  test("allows editing feature code", () =>
-    assert.equal(write("code_action", { TargetFile: join(repo, "web", "src", "features", "x", "y.tsx") }), "allow"));
-  test("allows reading protected files", () => assert.equal(write("view_file", { AbsolutePath: join(repo, "AGENTS.md") }), "allow"));
-  // Antigravity reads a PreToolUse reply without `decision` as a deny with an empty reason.
-  test("answers allow explicitly, even for an empty payload", () => {
-    assert.equal(run("pre-tool", {}).decision, "allow");
-    assert.equal(write("read_file", { path: join(repo, ".agents", "skills", "execute-task", "SKILL.md") }), "allow");
   });
-  test("covers MCP edit tools", () =>
-    assert.equal(write("mcp_tool", { name: "apply_edits", arguments: { path: "web/.oxlintrc.json" } }), "deny"));
+  after(() => ws.cleanup());
+
+  test("Antigravity allows orchestrator in main checkout and blocks executor in task worktree", () => {
+    const protectedWrite = { toolCall: { name: "write_file", args: { TargetFile: "lefthook.yml" } }, cwd: ws.mainDir };
+    const protectedWriteTask = { toolCall: { name: "write_file", args: { TargetFile: "lefthook.yml" } }, cwd: ws.taskDir };
+    assert.equal(runHookCli("antigravity", "pre-tool", protectedWrite, ws.mainDir).json.decision, "allow");
+    assert.equal(runHookCli("antigravity", "pre-tool", protectedWriteTask, ws.taskDir).json.decision, "deny");
+
+    const pushMain = { toolCall: { name: "run_command", args: { CommandLine: "git push origin setup/04-roles" } }, cwd: ws.mainDir };
+    const pushTask = { toolCall: { name: "run_command", args: { CommandLine: "git push origin task/0001-example" } }, cwd: ws.taskDir };
+    assert.equal(runHookCli("antigravity", "pre-tool", pushMain, ws.mainDir).json.decision, "allow");
+    assert.equal(runHookCli("antigravity", "pre-tool", pushTask, ws.taskDir).json.decision, "deny");
+  });
+
+  test("Claude Code allows orchestrator in main checkout and blocks executor in task worktree", () => {
+    const editMain = { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: join(ws.mainDir, "lefthook.yml") }, cwd: ws.mainDir };
+    const editTask = { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: join(ws.taskDir, "lefthook.yml") }, cwd: ws.taskDir };
+    assert.equal(runHookCli("claude", "pre-tool", editMain, ws.mainDir).json.hookSpecificOutput.permissionDecision, "allow");
+    assert.equal(runHookCli("claude", "pre-tool", editTask, ws.taskDir).json.hookSpecificOutput.permissionDecision, "deny");
+  });
+
+  test("OpenCode V2 plugin allows orchestrator in main checkout and blocks executor in task worktree", async () => {
+    let mainToolHook;
+    const mod = await import(pluginUrl);
+    await mod.default.setup({
+      directory: ws.mainDir,
+      tool: {
+        async hook(event, fn) {
+          if (event === "execute.before") mainToolHook = fn;
+        },
+      },
+    });
+
+    await mainToolHook({ tool: "edit", args: { filePath: "lefthook.yml" } });
+    await assert.rejects(() => opencodeToolHook({ tool: "edit", args: { filePath: "lefthook.yml" } }), /protected/);
+    await assert.rejects(() => opencodeShellHook({ command: "git push origin task/0001-example" }), /never push/);
+  });
 });
 
-describe("opencode adapter", () => {
+describe("Claude Code and Antigravity tool guards (Bash, Edit, NotebookEdit, mcp__*, .git, worktree escape)", () => {
+  let ws;
+
+  before(() => {
+    ws = createTempWorkspace();
+    const s = spawnSync(process.execPath, [taskScript, "start", "0001"], { cwd: ws.mainDir, encoding: "utf8" });
+    assert.equal(s.status, 0, s.stderr);
+  });
+  after(() => ws.cleanup());
+
+  test("Claude Code blocks Bash, Edit, NotebookEdit, and mcp__* violations in task worktree", () => {
+    const denyCases = [
+      ["Bash --no-verify", { tool_name: "Bash", tool_input: { command: "git commit --no-verify -m x" } }],
+      ["Bash push", { tool_name: "Bash", tool_input: { command: "git push origin task/0001-example" } }],
+      ["Bash outside redirect", { tool_name: "Bash", tool_input: { command: "echo hi > ../outside.txt" } }],
+      ["Bash write .git agent-role", { tool_name: "Bash", tool_input: { command: "echo orchestrator > .git" } }],
+      ["Edit protected", { tool_name: "Edit", tool_input: { file_path: join(ws.taskDir, "Directory.Build.targets") } }],
+      ["Edit generated", { tool_name: "Edit", tool_input: { file_path: join(ws.taskDir, "web/src/lib/api/gen/index.ts") } }],
+      ["Edit outside worktree", { tool_name: "Edit", tool_input: { file_path: join(ws.parent, "escape.cs") } }],
+      ["Edit .git internals", { tool_name: "Edit", tool_input: { file_path: join(ws.taskDir, ".git") } }],
+      ["NotebookEdit protected", { tool_name: "NotebookEdit", tool_input: { notebook_path: join(ws.taskDir, "docs/adr/0001.ipynb") } }],
+      ["NotebookEdit outside worktree", { tool_name: "NotebookEdit", tool_input: { notebook_path: join(ws.parent, "evil.ipynb") } }],
+      ["mcp__* write", { tool_name: "mcp__filesystem__write_file", tool_input: { path: join(ws.taskDir, "web/.oxlintrc.json") } }],
+      ["mcp__* shell exec", { tool_name: "mcp__terminal__run_command", tool_input: { command: "pnpm add lodash" } }],
+    ];
+
+    for (const [label, payload] of denyCases) {
+      const res = runHookCli("claude", "pre-tool", { ...payload, cwd: ws.taskDir }, ws.taskDir);
+      assert.equal(res.json.hookSpecificOutput?.permissionDecision, "deny", `Expected deny for ${label}`);
+    }
+
+    const allowCases = [
+      { tool_name: "Edit", tool_input: { file_path: join(ws.taskDir, "src/Modules/Orders/App.Orders/Order.cs") } },
+      { tool_name: "Bash", tool_input: { command: "dotnet test --project tests/App.ArchitectureTests > /dev/null" } },
+      { tool_name: "Read", tool_input: { file_path: join(ws.taskDir, "AGENTS.md") } },
+      { tool_name: "mcp__microsoft_docs__search", tool_input: { query: "TimeProvider .NET 11" } },
+    ];
+    for (const payload of allowCases) {
+      const res = runHookCli("claude", "pre-tool", { ...payload, cwd: ws.taskDir }, ws.taskDir);
+      assert.equal(res.json.hookSpecificOutput?.permissionDecision, "allow");
+    }
+  });
+
+  test("Antigravity covers NotebookEdit, mcp__*, outside worktree, and fails closed on invalid JSON", () => {
+    assert.equal(
+      runHookCli("antigravity", "pre-tool", { toolCall: { name: "edit_notebook", args: { AbsolutePath: "../escape.ipynb" } }, cwd: ws.taskDir }, ws.taskDir).json.decision,
+      "deny",
+    );
+    assert.equal(
+      runHookCli("antigravity", "pre-tool", { toolCall: { name: "mcp__t3__apply_patch", args: { path: "web/.oxlintrc.json" } }, cwd: ws.taskDir }, ws.taskDir).json.decision,
+      "deny",
+    );
+    assert.equal(
+      runHookCli("antigravity", "pre-tool", "{broken json", ws.taskDir).json.decision,
+      "deny",
+    );
+    assert.equal(
+      runHookCli("claude", "pre-tool", "{broken json", ws.taskDir).json.hookSpecificOutput.permissionDecision,
+      "deny",
+    );
+    // Empty valid payload on main checkout explicitly returns allow (Antigravity requirement).
+    assert.equal(runHookCli("antigravity", "pre-tool", {}, ws.mainDir).json.decision, "allow");
+  });
+});
+
+describe("SessionStart area AGENTS.md, PostToolUse, and Stop background check", () => {
+  let ws;
+
+  before(() => {
+    ws = createTempWorkspace();
+    const s = spawnSync(process.execPath, [taskScript, "start", "0001"], { cwd: ws.mainDir, encoding: "utf8" });
+    assert.equal(s.status, 0, s.stderr);
+  });
+  after(() => ws.cleanup());
+
+  test("SessionStart injects area AGENTS.md files deduced from task allow", () => {
+    const claudeRes = runHookCli("claude", "session-start", { cwd: ws.taskDir }, ws.taskDir);
+    const ctx = claudeRes.json.hookSpecificOutput?.additionalContext ?? "";
+    assert.match(ctx, /Backend Area Rules/);
+    assert.match(ctx, /Frontend Area Rules/);
+
+    const agyRes = runHookCli("antigravity", "session-start", { cwd: ws.taskDir }, ws.taskDir);
+    const msg = agyRes.json.injectSteps?.[0]?.systemMessage?.systemMessage ?? "";
+    assert.match(msg, /Backend Area Rules/);
+    assert.match(msg, /Frontend Area Rules/);
+  });
+
+  test("PostToolUse runs oxlint on edited web TS files for Claude Code", () => {
+    mkdirSync(join(ws.taskDir, "web/src/features/orders"), { recursive: true });
+    writeFileSync(join(ws.taskDir, "web/src/features/orders/bad.ts"), "debugger;\nexport const x = 1;\n");
+
+    const res = runHookCli(
+      "claude",
+      "post-tool",
+      { tool_name: "Edit", tool_input: { file_path: join(ws.taskDir, "web/src/features/orders/bad.ts") }, cwd: ws.taskDir },
+      ws.taskDir,
+    );
+    assert.match(res.json.hookSpecificOutput?.additionalContext ?? "", /no-debugger|debugger/i);
+
+    writeFileSync(join(ws.taskDir, "web/src/features/orders/good.ts"), "export const x = 1;\n");
+    const cleanRes = runHookCli(
+      "claude",
+      "post-tool",
+      { tool_name: "Edit", tool_input: { file_path: join(ws.taskDir, "web/src/features/orders/good.ts") }, cwd: ws.taskDir },
+      ws.taskDir,
+    );
+    assert.deepEqual(cleanRes.json, {});
+  });
+
+  test("Stop refuses while background work is running and enforces verify fingerprint + 3-failure guidance", () => {
+    // Antigravity: fullyIdle: false blocks Stop.
+    const agyBusy = runHookCli("antigravity", "stop", { fullyIdle: false, cwd: ws.taskDir }, ws.taskDir);
+    assert.equal(agyBusy.json.decision, "continue");
+    assert.match(agyBusy.json.reason, /Background work/);
+
+    // Claude Code: background_tasks_running: true blocks Stop.
+    const claudeBusy = runHookCli("claude", "stop", { background_tasks_running: true, cwd: ws.taskDir }, ws.taskDir);
+    assert.equal(claudeBusy.json.decision, "block");
+    assert.match(claudeBusy.json.reason, /Background work/);
+
+    // Make an allowed edit and trigger 3 identical unverified Stop failures.
+    const target = join(ws.taskDir, "src/Modules/Orders/App.Orders/Item.cs");
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, "namespace App.Orders;\n");
+
+    const specPath = join(ws.taskDir, "docs/tasks/0001-example.md");
+    const specContent = readFileSync(specPath, "utf8").replace("status: in-progress", "status: review");
+    writeFileSync(specPath, specContent);
+
+    execFileSync("git", ["add", "-A"], { cwd: ws.taskDir });
+    execFileSync("git", ["commit", "-qm", "feat(orders): add item"], { cwd: ws.taskDir });
+
+    const s1 = runHookCli("claude", "stop", { cwd: ws.taskDir }, ws.taskDir);
+    const s2 = runHookCli("claude", "stop", { cwd: ws.taskDir }, ws.taskDir);
+    const s3 = runHookCli("claude", "stop", { cwd: ws.taskDir }, ws.taskDir);
+    assert.equal(s1.json.decision, "block");
+    assert.match(s1.json.reason, /task\.mjs verify/);
+    assert.equal(s2.json.decision, "block");
+    assert.equal(s3.json.decision, "block");
+    assert.match(s3.json.reason, /Repeated failure \(3x/);
+
+    // Write matching fingerprint and confirm Stop allows completion.
+    const base = execFileSync("git", ["merge-base", "main", "HEAD"], { cwd: ws.taskDir, encoding: "utf8" }).trim();
+    const diffNames = execFileSync("git", ["diff", "--name-only", "--no-renames", base, "--", ".", ":(exclude)docs/tasks"], {
+      cwd: ws.taskDir,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean)
+      .sort();
+    const fp = sha256(diffNames.map((p) => `${p}:${sha256(readFileSync(join(ws.taskDir, p)))}`).join("\n"));
+    writeState(ws.taskDir, "verify-0001.json", { ok: true, fingerprint: fp, ran: [] });
+
+    const okStop = runHookCli("claude", "stop", { cwd: ws.taskDir }, ws.taskDir);
+    assert.deepEqual(okStop.json, {});
+
+    // Stop in main checkout (orchestrator) never blocks.
+    assert.deepEqual(runHookCli("antigravity", "stop", { fullyIdle: false, cwd: ws.mainDir }, ws.mainDir).json, {});
+  });
+});
+
+describe("opencode adapter, bypass removal, and empty PATTERNS", () => {
   test("denies edits to every protected and generated path", () => {
     const text = readFileSync(join(repo, "opencode.jsonc"), "utf8")
       .split("\n")
@@ -128,109 +421,21 @@ describe("opencode adapter", () => {
     const expected = [...PROTECTED.filter((p) => p !== "docs/tasks/**"), ...GENERATED].map((p) => p.replace(/\/\*\*$/, "/*"));
     assert.deepEqual(expected.filter((p) => !denied.has(p)), []);
   });
-});
 
-describe("fence", () => {
-  let dir;
-  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  const put = (path, content) => {
-    mkdirSync(dirname(join(dir, path)), { recursive: true });
-    writeFileSync(join(dir, path), content);
-  };
-  const spec = (status = "ready") => `---
-id: "0001"
-title: Example
-status: ${status}
-scope: orders
-allow:
-  - src/Modules/Orders/**
-unlock: []
-verify: []
----
-# 0001 · Example
-
-## Acceptance criteria
-
-- [ ] it works
-
-## Executor log
-
-## Review
-`;
-
-  before(() => {
-    dir = mkdtempSync(join(tmpdir(), "app-fence-"));
-    git("init", "-q", "-b", "main");
-    git("config", "user.email", "test@example.com");
-    git("config", "user.name", "test");
-    git("config", "core.hooksPath", "/dev/null");
-    put("docs/tasks/0001-example.md", spec());
-    put("lefthook.yml", "x: 1\n");
-    put(".github/workflows/fence.yml", "name: fence\n");
-    put("src/Modules/Orders/App.Orders/Persistence/Migrations/1_Init.cs", "// init\n");
-    git("add", "-A");
-    git("commit", "-qm", "init");
-    git("switch", "-qc", "task/0001-example");
-  });
-  after(() => rmSync(dir, { recursive: true, force: true }));
-
-  const errorsAfter = (fn) => {
-    git("reset", "-q", "--hard");
-    git("clean", "-qfd");
-    fn();
-    return check(dir, { mode: "worktree" }).errors;
-  };
-
-  test("is skipped off task branches", () => {
-    git("switch", "-q", "main");
-    assert.equal(check(dir, {}).skipped, true);
-    git("switch", "-q", "task/0001-example");
-  });
-  test("passes for allowed work and executor-owned task edits", () =>
-    assert.deepEqual(
-      errorsAfter(() => {
-        put("src/Modules/Orders/App.Orders/Domain/Entry.cs", "namespace X;\n");
-        put("docs/tasks/0001-example.md", spec("review").replace("- [ ] it works", "- [x] it works").replace("## Executor log\n", "## Executor log\n\nDone.\n"));
-      }),
-      [],
-    ));
-  test("flags paths outside allow", () =>
-    assert.match(errorsAfter(() => put("src/Other/A.cs", "x\n")).join("\n"), /outside the task's `allow`/));
-  test("flags protected files", () => assert.match(errorsAfter(() => put("lefthook.yml", "x: 2\n")).join("\n"), /protected file/));
-  test("flags edits to existing migrations", () =>
-    assert.match(errorsAfter(() => put("src/Modules/Orders/App.Orders/Persistence/Migrations/1_Init.cs", "// changed\n")).join("\n"), /append-only/));
-  test("flags spec changes", () =>
-    assert.match(errorsAfter(() => put("docs/tasks/0001-example.md", spec().replace("src/Modules/Orders/**", "**"))).join("\n"), /frontmatter `allow` changed/));
-  test("flags reviewer-only statuses", () =>
-    assert.match(errorsAfter(() => put("docs/tasks/0001-example.md", spec("done"))).join("\n"), /set by the reviewer/));
-  test("has no code patterns left in PATTERNS", () => assert.deepEqual(PATTERNS, []));
-  test("verify runs the gates past fence violations only for reviewers", () => {
-    errorsAfter(() => put("docs/elsewhere.md", "x\n"));
-    const verify = (env) =>
-      spawnSync(process.execPath, [join(repo, "scripts", "agents", "task.mjs"), "verify", "--task", "0001"], {
-        cwd: dir,
-        encoding: "utf8",
-        env: { ...process.env, APP_TASK_FENCE: env },
-      }).status;
-    assert.equal(verify(""), 1);
-    assert.equal(verify("off"), 0);
-  });
-  test("checks PR head as data from main and catches tampered fence workflow", () => {
-    git("reset", "-q", "--hard");
-    git("clean", "-qfd");
-    git("switch", "-qc", "pr-tamper", "main");
-    try {
-      put(".github/workflows/fence.yml", "name: tampered\n");
-      git("add", "-A");
-      git("commit", "-qm", "tamper fence");
-      const headSha = git("rev-parse", "HEAD").trim();
-      git("switch", "-q", "main");
-      const res = check(dir, { mode: "ref", ref: headSha, task: "0001" });
-      assert.match(res.errors.join("\n"), /\.github\/workflows\/fence\.yml: protected file/);
-      assert.throws(() => check(dir, { mode: "ref", ref: headSha, task: "9999" }), /no docs\/tasks\/9999-\*\.md/);
-    } finally {
-      git("switch", "-q", "task/0001-example");
-      git("branch", "-qD", "pr-tamper");
+  test("legacy fence bypass var is completely removed, PATTERNS is empty, and lefthook drops emergency skip tip", () => {
+    assert.deepEqual(PATTERNS, []);
+    const bypassRe = new RegExp("APP_" + "TASK_FENCE");
+    const files = [
+      "scripts/agents/task.mjs",
+      "scripts/agents/agent-hook.mjs",
+      "opencode.jsonc",
+      "docs/tasks/README.md",
+      "docs/adr/0008-agent-task-workflow.md",
+      ".agents/skills/review-task/SKILL.md",
+    ];
+    for (const rel of files) {
+      assert.doesNotMatch(readFileSync(join(repo, rel), "utf8"), bypassRe);
     }
+    assert.doesNotMatch(readFileSync(join(repo, "lefthook.yml"), "utf8"), new RegExp("LEFTHOOK" + "=0"));
   });
 });

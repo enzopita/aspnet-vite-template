@@ -36,17 +36,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! "$PR_HEAD_REF" =~ ^task/ ]]; then
-            echo "Not a task/* branch ($PR_HEAD_REF) — task fence skipped."
+          if [[ ! "$PR_HEAD_REF" =~ ^(task|review)/ ]]; then
+            echo "Not a task/* or review/* branch ($PR_HEAD_REF) — task fence skipped."
             exit 0
           fi
 
-          if [[ ! "$PR_HEAD_REF" =~ ^task/([0-9]{4})(-|$) ]]; then
-            echo "Invalid task branch name: $PR_HEAD_REF (expected task/NNNN-<slug>)" >&2
+          if [[ ! "$PR_HEAD_REF" =~ ^(task|review)/([0-9]{4})(-|$) ]]; then
+            echo "Invalid branch name: $PR_HEAD_REF (expected task/NNNN-<slug> or review/NNNN-<slug>)" >&2
             exit 1
           fi
 
-          TASK_ID="${BASH_REMATCH[1]}"
+          TASK_ID="${BASH_REMATCH[2]}"
           git show-ref --verify --quiet refs/heads/main || git branch main HEAD
           git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
           FETCHED_SHA="$(git rev-parse FETCH_HEAD)"
@@ -55,4 +55,4 @@ jobs:
             exit 1
           fi
 
-          node scripts/agents/task.mjs check --ref "$PR_HEAD_SHA" --task "$TASK_ID"
+          node scripts/agents/task.mjs check --ref "$PR_HEAD_SHA" --branch "$PR_HEAD_REF" --task "$TASK_ID"

@@ -3,7 +3,6 @@
 #
 # Install:   pnpm --dir web install   (its `prepare` script runs `lefthook install`)
 # Run by hand: lefthook run pre-commit --all-files  |  lefthook run pre-push
-# Emergency skip (CI still enforces everything): LEFTHOOK=0 git commit ...
 #
 # What each hook guards
 #   pre-commit  staged files only, seconds: formatting (auto-fixed and re-staged), lint + import boundaries,
