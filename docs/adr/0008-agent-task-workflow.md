@@ -40,7 +40,7 @@ Enforcement lives in the repository, so it holds across harnesses:
   for the touched areas, and the task's own commands, recording a fingerprint of the verified tree.
 - **Unified harness adapters (`scripts/agents/agent-hook.mjs`):** role-aware SessionStart, PreToolUse, PostToolUse and Stop
   hooks wired into Claude Code (`.claude/settings.json`), Antigravity (`.agents/hooks.json`) and OpenCode V2 plugins
-  (`.opencode/plugins/app-guard.mjs`, backed by `opencode.jsonc`). Fail closed on invalid write/command/MCP events.
+  (`.opencode/plugins/app-guard/index.mjs`, backed by `opencode.jsonc`). Fail closed on invalid write/command/MCP events.
 
 ## Consequences
 
