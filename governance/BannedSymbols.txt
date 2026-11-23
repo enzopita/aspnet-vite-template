@@ -1,0 +1,29 @@
+// Banned APIs enforced across all C# projects (src/ and tests/) via Microsoft.CodeAnalysis.BannedApiAnalyzers (RS0030).
+// Format: <DocCommentId>;<Reason>
+
+// Sync-over-async: blocks threads and risks thread-pool starvation or deadlocks.
+M:System.Threading.Tasks.Task.Wait;Sync-over-async: await the Task or pass a CancellationToken instead of blocking with Task.Wait
+M:System.Threading.Tasks.Task.Wait(System.Int32);Sync-over-async: await the Task instead of blocking with Task.Wait
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan);Sync-over-async: await the Task instead of blocking with Task.Wait
+M:System.Threading.Tasks.Task.Wait(System.Threading.CancellationToken);Sync-over-async: await the Task instead of blocking with Task.Wait
+M:System.Threading.Tasks.Task.Wait(System.Int32,System.Threading.CancellationToken);Sync-over-async: await the Task instead of blocking with Task.Wait
+P:System.Threading.Tasks.Task`1.Result;Sync-over-async: await the Task instead of reading .Result
+M:System.Runtime.CompilerServices.TaskAwaiter.GetResult;Sync-over-async: await the Task instead of calling .GetAwaiter().GetResult()
+M:System.Runtime.CompilerServices.TaskAwaiter`1.GetResult;Sync-over-async: await the Task instead of calling .GetAwaiter().GetResult()
+M:System.Runtime.CompilerServices.ValueTaskAwaiter.GetResult;Sync-over-async: await the ValueTask instead of calling .GetAwaiter().GetResult()
+M:System.Runtime.CompilerServices.ValueTaskAwaiter`1.GetResult;Sync-over-async: await the ValueTask instead of calling .GetAwaiter().GetResult()
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable.ConfiguredTaskAwaiter.GetResult;Sync-over-async: await the Task instead of calling .GetAwaiter().GetResult()
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1.ConfiguredTaskAwaiter.GetResult;Sync-over-async: await the Task instead of calling .GetAwaiter().GetResult()
+M:System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable.ConfiguredValueTaskAwaiter.GetResult;Sync-over-async: await the ValueTask instead of calling .GetAwaiter().GetResult()
+M:System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1.ConfiguredValueTaskAwaiter.GetResult;Sync-over-async: await the ValueTask instead of calling .GetAwaiter().GetResult()
+
+// Analyzer suppression via attribute (verified: BannedApiAnalyzers 5.6.0 emits RS0030 even with [Conditional("CODE_ANALYSIS")]; also enforced by GovernanceTests).
+T:System.Diagnostics.CodeAnalysis.SuppressMessageAttribute;Do not suppress analyzers with SuppressMessage — fix the underlying issue or document an exception in governance/
+
+// Skipped tests: fix or delete obsolete tests instead of skipping them at runtime or via attributes.
+M:Xunit.Assert.Skip(System.String);Do not skip tests with Assert.Skip — fix or remove the test
+M:Xunit.Assert.SkipUnless(System.Boolean,System.String);Do not skip tests with Assert.SkipUnless — fix or remove the test
+M:Xunit.Assert.SkipWhen(System.Boolean,System.String);Do not skip tests with Assert.SkipWhen — fix or remove the test
+P:Xunit.FactAttribute.SkipUnless;Do not skip tests with FactAttribute.SkipUnless — fix or remove the test
+P:Xunit.FactAttribute.SkipWhen;Do not skip tests with FactAttribute.SkipWhen — fix or remove the test
+P:Xunit.FactAttribute.Explicit;Do not mark tests Explicit — run all tests reliably or use integration test filters

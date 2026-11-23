@@ -5,6 +5,8 @@
     <OpenApiGenerateDocumentsOnBuild>true</OpenApiGenerateDocumentsOnBuild>
     <OpenApiDocumentsDirectory>$(MSBuildProjectDirectory)/../../web/openapi</OpenApiDocumentsDirectory>
     <OpenApiGenerateDocumentsOptions>--file-name app</OpenApiGenerateDocumentsOptions>
+    <!-- Approved in governance/nowarn.json until Asp.Versioning.OpenApi 11.x supports Microsoft.OpenApi 3.x. -->
+    <NoWarn>$(NoWarn);AV0029;AV0030</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

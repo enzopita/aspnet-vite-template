@@ -9,7 +9,7 @@
     "build": "vite build && tsc -b",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "lint": "oxlint --type-aware",
+    "lint": "oxlint --type-aware && node ../scripts/lint-extra.mjs",
     "lint:fix": "oxlint --type-aware --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",

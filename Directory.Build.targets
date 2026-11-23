@@ -1,0 +1,232 @@
+<Project>
+  <!-- Wire banned-symbol lists after project props so $(IsTestProject) has its final value. -->
+  <ItemGroup>
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)governance\BannedSymbols.txt" Visible="false" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)governance\BannedSymbols.src.txt" Visible="false" Condition="'$(IsTestProject)' != 'true'" />
+  </ItemGroup>
+
+  <UsingTask
+    TaskName="ValidateGovernanceNoWarn"
+    TaskFactory="RoslynCodeTaskFactory"
+    AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <ProjectName ParameterType="System.String" Required="true" />
+      <NoWarnValue ParameterType="System.String" />
+      <AllowlistPath ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs">
+<![CDATA[
+        var sdkDefaults = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase) { "1701", "1702" };
+        var projectApproved = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+        if (!System.IO.File.Exists(AllowlistPath))
+        {
+            Log.LogError($"Governance NoWarn allowlist not found: '{AllowlistPath}'.");
+            return false;
+        }
+
+        string ReadJsonString(string s, ref int idx)
+        {
+            idx++; // skip opening '"'
+            var sb = new System.Text.StringBuilder();
+            while (idx < s.Length)
+            {
+                var c = s[idx++];
+                if (c == '"') return sb.ToString();
+                if (c == '\\')
+                {
+                    if (idx >= s.Length) throw new System.FormatException("Unterminated escape in JSON string.");
+                    var esc = s[idx++];
+                    switch (esc)
+                    {
+                        case '"': case '\\': case '/': sb.Append(esc); break;
+                        case 'b': sb.Append('\b'); break;
+                        case 'f': sb.Append('\f'); break;
+                        case 'n': sb.Append('\n'); break;
+                        case 'r': sb.Append('\r'); break;
+                        case 't': sb.Append('\t'); break;
+                        case 'u':
+                            if (idx + 4 > s.Length) throw new System.FormatException("Invalid \\u escape.");
+                            sb.Append((char)System.Convert.ToInt32(s.Substring(idx, 4), 16));
+                            idx += 4;
+                            break;
+                        default: throw new System.FormatException($"Invalid escape '\\{esc}'.");
+                    }
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            throw new System.FormatException("Unterminated JSON string.");
+        }
+
+        void SkipWs(string s, ref int idx)
+        {
+            while (idx < s.Length && char.IsWhiteSpace(s[idx])) idx++;
+        }
+
+        object ReadJsonValue(string s, ref int idx)
+        {
+            SkipWs(s, ref idx);
+            if (idx >= s.Length) throw new System.FormatException("Unexpected end of JSON.");
+            var c = s[idx];
+            if (c == '"') return ReadJsonString(s, ref idx);
+            if (c == '{')
+            {
+                idx++;
+                var obj = new System.Collections.Generic.Dictionary<string, object>(System.StringComparer.Ordinal);
+                SkipWs(s, ref idx);
+                if (idx < s.Length && s[idx] == '}') { idx++; return obj; }
+                while (true)
+                {
+                    SkipWs(s, ref idx);
+                    if (idx >= s.Length || s[idx] != '"') throw new System.FormatException("Expected property name.");
+                    var key = ReadJsonString(s, ref idx);
+                    SkipWs(s, ref idx);
+                    if (idx >= s.Length || s[idx] != ':') throw new System.FormatException("Expected ':'.");
+                    idx++;
+                    obj[key] = ReadJsonValue(s, ref idx);
+                    SkipWs(s, ref idx);
+                    if (idx < s.Length && s[idx] == ',') { idx++; continue; }
+                    if (idx < s.Length && s[idx] == '}') { idx++; return obj; }
+                    throw new System.FormatException("Expected ',' or '}' in JSON object.");
+                }
+            }
+            if (c == '[')
+            {
+                idx++;
+                var list = new System.Collections.Generic.List<object>();
+                SkipWs(s, ref idx);
+                if (idx < s.Length && s[idx] == ']') { idx++; return list; }
+                while (true)
+                {
+                    list.Add(ReadJsonValue(s, ref idx));
+                    SkipWs(s, ref idx);
+                    if (idx < s.Length && s[idx] == ',') { idx++; continue; }
+                    if (idx < s.Length && s[idx] == ']') { idx++; return list; }
+                    throw new System.FormatException("Expected ',' or ']' in JSON array.");
+                }
+            }
+            var start = idx;
+            while (idx < s.Length && !char.IsWhiteSpace(s[idx]) && s[idx] != ',' && s[idx] != '}' && s[idx] != ']') idx++;
+            return s.Substring(start, idx - start);
+        }
+
+        try
+        {
+            var json = System.IO.File.ReadAllText(AllowlistPath);
+            var pos = 0;
+            var rootObj = ReadJsonValue(json, ref pos) as System.Collections.Generic.Dictionary<string, object>;
+            SkipWs(json, ref pos);
+            if (rootObj == null || pos != json.Length)
+            {
+                Log.LogError("governance/nowarn.json must be a valid JSON object.");
+                return false;
+            }
+
+            if (!rootObj.TryGetValue("projects", out var projectsVal) ||
+                !(projectsVal is System.Collections.Generic.Dictionary<string, object> projects))
+            {
+                Log.LogError("governance/nowarn.json must contain a top-level 'projects' object.");
+                return false;
+            }
+
+            if (projects.TryGetValue(ProjectName, out var entriesVal))
+            {
+                if (!(entriesVal is System.Collections.Generic.Dictionary<string, object> entries))
+                {
+                    Log.LogError($"governance/nowarn.json entry for '{ProjectName}' must be an object mapping warning codes.");
+                    return false;
+                }
+
+                foreach (var kv in entries)
+                {
+                    if (!(kv.Value is System.Collections.Generic.Dictionary<string, object> meta) ||
+                        !meta.TryGetValue("reason", out var reasonObj) ||
+                        !(reasonObj is string reason) ||
+                        string.IsNullOrWhiteSpace(reason) ||
+                        !meta.TryGetValue("removeWhen", out var removeObj) ||
+                        !(removeObj is string removeWhen) ||
+                        string.IsNullOrWhiteSpace(removeWhen))
+                    {
+                        Log.LogError($"governance/nowarn.json entry '{ProjectName}.{kv.Key}' must define non-empty 'reason' and 'removeWhen'.");
+                        return false;
+                    }
+
+                    projectApproved.Add(kv.Key);
+                }
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Log.LogError($"Failed to parse governance/nowarn.json: {ex.Message}");
+            return false;
+        }
+
+        var unapproved = new System.Collections.Generic.List<string>();
+        var raw = NoWarnValue ?? string.Empty;
+        foreach (var token in raw.Split(new[] { ';', ',', ' ', '\t', '\r', '\n' }, System.StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (sdkDefaults.Contains(token) || projectApproved.Contains(token))
+            {
+                continue;
+            }
+            if (!unapproved.Contains(token))
+            {
+                unapproved.Add(token);
+            }
+        }
+
+        if (unapproved.Count > 0)
+        {
+            Log.LogError($"Project '{ProjectName}' defines unapproved NoWarn code(s): {string.Join(", ", unapproved)}. Fix the warning or register an entry with 'reason' and 'removeWhen' in governance/nowarn.json.");
+            return false;
+        }
+]]>
+      </Code>
+    </Task>
+  </UsingTask>
+
+  <!-- Evaluated after every .csproj: rejects any project-level weakening of compiler/analyzer strictness. -->
+  <Target Name="EnforceGovernanceBuildProperties" BeforeTargets="CoreCompile">
+    <Error Condition="'$(TreatWarningsAsErrors)' != 'true'"
+           Text="Governance: TreatWarningsAsErrors must remain 'true' (found '$(TreatWarningsAsErrors)')." />
+    <Error Condition="'$(CodeAnalysisTreatWarningsAsErrors)' != 'true'"
+           Text="Governance: CodeAnalysisTreatWarningsAsErrors must remain 'true' (found '$(CodeAnalysisTreatWarningsAsErrors)')." />
+    <Error Condition="'$(Nullable)' != 'enable'"
+           Text="Governance: Nullable must remain 'enable' (found '$(Nullable)')." />
+    <Error Condition="'$(RunAnalyzers)' != 'true'"
+           Text="Governance: RunAnalyzers must remain 'true' (found '$(RunAnalyzers)')." />
+    <Error Condition="'$(RunAnalyzersDuringBuild)' != 'true'"
+           Text="Governance: RunAnalyzersDuringBuild must remain 'true' (found '$(RunAnalyzersDuringBuild)')." />
+    <Error Condition="'$(EnableNETAnalyzers)' != 'true'"
+           Text="Governance: EnableNETAnalyzers must remain 'true' (found '$(EnableNETAnalyzers)')." />
+    <Error Condition="'$(EnforceCodeStyleInBuild)' != 'true'"
+           Text="Governance: EnforceCodeStyleInBuild must remain 'true' (found '$(EnforceCodeStyleInBuild)')." />
+    <Error Condition="'$(AnalysisLevel)' != 'latest-recommended'"
+           Text="Governance: AnalysisLevel must remain 'latest-recommended' (found '$(AnalysisLevel)')." />
+    <Error Condition="'$(AnalysisMode)' != ''"
+           Text="Governance: AnalysisMode override is disallowed (found '$(AnalysisMode)'); keep AnalysisLevel=latest-recommended." />
+    <Error Condition="'$(AnalysisModeDesign)' != ''" Text="Governance: AnalysisModeDesign override is disallowed (found '$(AnalysisModeDesign)')." />
+    <Error Condition="'$(AnalysisModeDocumentation)' != ''" Text="Governance: AnalysisModeDocumentation override is disallowed (found '$(AnalysisModeDocumentation)')." />
+    <Error Condition="'$(AnalysisModeGlobalization)' != ''" Text="Governance: AnalysisModeGlobalization override is disallowed (found '$(AnalysisModeGlobalization)')." />
+    <Error Condition="'$(AnalysisModeInteroperability)' != ''" Text="Governance: AnalysisModeInteroperability override is disallowed (found '$(AnalysisModeInteroperability)')." />
+    <Error Condition="'$(AnalysisModeMaintainability)' != ''" Text="Governance: AnalysisModeMaintainability override is disallowed (found '$(AnalysisModeMaintainability)')." />
+    <Error Condition="'$(AnalysisModeNaming)' != ''" Text="Governance: AnalysisModeNaming override is disallowed (found '$(AnalysisModeNaming)')." />
+    <Error Condition="'$(AnalysisModePerformance)' != ''" Text="Governance: AnalysisModePerformance override is disallowed (found '$(AnalysisModePerformance)')." />
+    <Error Condition="'$(AnalysisModeSingleFile)' != ''" Text="Governance: AnalysisModeSingleFile override is disallowed (found '$(AnalysisModeSingleFile)')." />
+    <Error Condition="'$(AnalysisModeReliability)' != ''" Text="Governance: AnalysisModeReliability override is disallowed (found '$(AnalysisModeReliability)')." />
+    <Error Condition="'$(AnalysisModeSecurity)' != ''" Text="Governance: AnalysisModeSecurity override is disallowed (found '$(AnalysisModeSecurity)')." />
+    <Error Condition="'$(AnalysisModeUsage)' != ''" Text="Governance: AnalysisModeUsage override is disallowed (found '$(AnalysisModeUsage)')." />
+    <Error Condition="'$(AnalysisModeStyle)' != ''" Text="Governance: AnalysisModeStyle override is disallowed (found '$(AnalysisModeStyle)')." />
+    <Error Condition="'$(WarningsNotAsErrors)' != ''"
+           Text="Governance: WarningsNotAsErrors must remain empty (found '$(WarningsNotAsErrors)')." />
+
+    <ValidateGovernanceNoWarn
+      ProjectName="$(MSBuildProjectName)"
+      NoWarnValue="$(NoWarn)"
+      AllowlistPath="$(MSBuildThisFileDirectory)governance\nowarn.json" />
+  </Target>
+</Project>

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { GENERATED, PROTECTED, frozenBody, globToRegExp, parseTask } from "./lib.mjs";
-import { CONCURRENCY_RUNS, check, gatesFor } from "./task.mjs";
+import { CONCURRENCY_RUNS, PATTERNS, check, gatesFor } from "./task.mjs";
 
 const repo = resolve(import.meta.dirname, "..", "..");
 
@@ -203,8 +203,7 @@ verify: []
     assert.match(errorsAfter(() => put("docs/tasks/0001-example.md", spec().replace("src/Modules/Orders/**", "**"))).join("\n"), /frontmatter `allow` changed/));
   test("flags reviewer-only statuses", () =>
     assert.match(errorsAfter(() => put("docs/tasks/0001-example.md", spec("done"))).join("\n"), /set by the reviewer/));
-  test("flags suppressions in added lines", () =>
-    assert.match(errorsAfter(() => put("src/Modules/Orders/App.Orders/A.cs", "#pragma warning disable CS1234\n")).join("\n"), /warning suppressed/));
+  test("has no code patterns left in PATTERNS", () => assert.deepEqual(PATTERNS, []));
   test("verify runs the gates past fence violations only for reviewers", () => {
     errorsAfter(() => put("docs/elsewhere.md", "x\n"));
     const verify = (env) =>
@@ -216,35 +215,6 @@ verify: []
     assert.equal(verify(""), 1);
     assert.equal(verify("off"), 0);
   });
-  test("allows the pragma that `dotnet ef` generates in new migrations", () =>
-    assert.doesNotMatch(
-      errorsAfter(() => put("src/Modules/Orders/App.Orders/Persistence/Migrations/2_Add.Designer.cs", "#pragma warning disable 612, 618\n")).join("\n"),
-      /warning suppressed/,
-    ));
-  test("flags assertions behind a null-conditional in tests", () =>
-    assert.match(
-      errorsAfter(() => put("tests/A/ATests.cs", 'response.Content.Headers.ContentType?.MediaType.ShouldBe("x");\n')).join("\n"),
-      /assertion behind `\?\.`/,
-    ));
-  test("allows asserting non-null before reading through", () =>
-    assert.doesNotMatch(
-      errorsAfter(() => put("tests/A/ATests.cs", 'response.Content.Headers.ContentType.ShouldNotBeNull().MediaType.ShouldBe("x");\n')).join("\n"),
-      /assertion behind/,
-    ));
-  test("flags negative status assertions in tests", () =>
-    assert.match(
-      errorsAfter(() => put("tests/A/ATests.cs", "response.StatusCode.ShouldNotBe(HttpStatusCode.Conflict);\n")).join("\n"),
-      /negative status assertion/,
-    ));
-  test("flags null-forgiving after a call or indexer in tests", () => {
-    for (const line of ['var token = query["token"].Single()!;\n', 'var id = query["user"]!;\n'])
-      assert.match(errorsAfter(() => put("tests/A/ATests.cs", line)).join("\n"), /null-forgiving/);
-  });
-  test("allows inequality and negation in tests", () =>
-    assert.doesNotMatch(
-      errorsAfter(() => put("tests/A/ATests.cs", "if (Count() != 1 && !(done)) { }\n")).join("\n"),
-      /null-forgiving/,
-    ));
   test("checks PR head as data from main and catches tampered fence workflow", () => {
     git("reset", "-q", "--hard");
     git("clean", "-qfd");

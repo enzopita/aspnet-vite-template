@@ -24,7 +24,8 @@ Read the spec, the Executor log, and the full diff: `git diff main...task/NNNN-<
 - **AGENTS.md and the ADRs it touches.**
 - **Drift typical of weaker models**: assertions that can't fail, tests that restate the implementation, swallowed
   exceptions or `catch {}`, null-forgiving `!`, unused or duplicated helpers, re-implemented utilities that already
-  exist, comments narrating the obvious, hard-coded text, Portuguese identifiers or comments, magic numbers.
+  exist, comments narrating the obvious, hard-coded text, Portuguese identifiers or comments, magic numbers,
+  `double`/`float` used for money or currency values (use `decimal`).
 
 Done when every changed line has been read and every finding has a `file:line`.
 
@@ -50,9 +51,9 @@ A pass reported in the Executor log doesn't count until you have seen it yoursel
 For each finding, ask whether a machine could have caught it. If yes, propose the cheapest guard, ranked by how
 early it fires:
 
-1. a forbidden pattern in `PATTERNS` (`scripts/agents/task.mjs`) with a test in `scripts/agents/agents.test.mjs`,
-2. an architecture test or analyzer rule,
-3. a sentence in `.agents/skills/execute-task/SKILL.md`,
-4. a sharper section in the spec template.
+1. an analyzer or Oxlint rule (`governance/BannedSymbols*.txt`, `.editorconfig`, `web/.oxlintrc.json`),
+2. a `GovernanceTests` or `App.ArchitectureTests` rule,
+3. a residual pattern in `scripts/lint-extra.mjs`,
+4. a sentence in `.agents/skills/execute-task/SKILL.md` or a sharper section in the spec template.
 
 Done when every finding is either guarded, or you have told the user why it can't be.
