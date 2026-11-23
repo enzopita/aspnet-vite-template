@@ -5,6 +5,7 @@ using App.BuildingBlocks.Persistence;
 using App.Catalog;
 using App.SharedKernel;
 using Asp.Versioning;
+using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -43,6 +44,7 @@ builder.Services.AddApiVersioning(options =>
 
 builder.Services.AddOpenApi("v1", options =>
 {
+    options.OpenApiVersion = OpenApiSpecVersion.OpenApi3_1;
     options.AddDocumentTransformer((document, _, _) =>
     {
         document.Info.Title = "App API";
