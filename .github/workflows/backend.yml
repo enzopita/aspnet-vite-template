@@ -1,0 +1,65 @@
+# Backend gates: warnings-as-errors build, formatting, OpenAPI contract freshness, all .NET tests.
+# Cost notes: runs only when backend inputs change; one job (GitHub bills each job rounded up to the minute);
+# NuGet cache; superseded PR runs are cancelled.
+name: backend
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - "src/**"
+      - "tests/**"
+      - "web/openapi/**"
+      - "Directory.Build.props"
+      - "Directory.Packages.props"
+      - "global.json"
+      - "App.slnx"
+      - ".editorconfig"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - run: dotnet restore App.slnx
+
+      # Warnings are errors (Directory.Build.props); also regenerates web/openapi/app.json.
+      - run: dotnet build App.slnx --no-restore --configuration Release
+
+      - name: OpenAPI contract is committed and up to date
+        run: git diff --exit-code -- web/openapi
+
+      - name: Formatting
+        run: dotnet format whitespace App.slnx --verify-no-changes
+
+      # Architecture, unit and integration tests (Testcontainers uses the runner's Docker).
+      - run: dotnet test --solution App.slnx --no-build --configuration Release

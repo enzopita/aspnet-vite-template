@@ -1,0 +1,78 @@
+# Frontend gates: generated client + route tree freshness, TS 7 typecheck, Oxlint (boundaries), Oxfmt, tests,
+# i18n completeness and React Doctor. Runs only when web inputs change; one job; pnpm store cached.
+name: web
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - "web/**"
+      - "scripts/**"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # --ignore-scripts: skips `prepare` (git hooks are for local clones only).
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generated artifacts are up to date
+        run: |
+          pnpm run api:generate
+          pnpm exec vite build
+          node ../scripts/check-generated.mjs
+
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run fmt:check
+
+      # Component tests run in headless Chromium (Vitest browser mode, ADR 0005); the download is cached per
+      # Playwright version.
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(pnpm exec playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - run: pnpm exec playwright install --with-deps --only-shell chromium
+      - run: pnpm run test
+
+      - name: Agent tooling tests
+        run: node --test ../scripts/agents/
+
+      - name: i18n catalogs are complete
+        run: |
+          pnpm run i18n:extract
+          node ../scripts/check-i18n.mjs
+
+      - name: React Doctor
+        run: pnpm exec react-doctor . --yes --no-score --blocking warning

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Shared ASP.NET Core and infrastructure plumbing for modules.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Asp.Versioning.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\App.SharedKernel\App.SharedKernel.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Public contracts (query interfaces, DTOs, integration events) for the Catalog module.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\App.SharedKernel\App.SharedKernel.csproj" />
+  </ItemGroup>
+
+</Project>

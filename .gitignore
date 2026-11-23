@@ -1,0 +1,34 @@
+# .NET build and IDE outputs
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+publish/
+
+# Node / Vite / pnpm
+web/node_modules/
+web/dist/
+web/.tanstack/
+web/playwright-report/
+web/test-results/
+*.tsbuildinfo
+
+# Environment and secrets
+.env
+.env*.local
+!.env.example
+appsettings.*.local.json
+
+# OS / editors
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

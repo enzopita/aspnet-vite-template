@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Domain primitives shared by every module. Depends on the BCL only.</Description>
+  </PropertyGroup>
+
+</Project>
